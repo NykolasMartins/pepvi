@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Tokens
+   Cores repetidas em 8 arquivos viram uma decisão em um lugar. Não é sistema
+   de design — é o mínimo para não caçar "zinc-900" com find & replace.
+   ========================================================================== */
+@theme {
+  --font-sans: var(--fonte-texto), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--fonte-titulo), ui-sans-serif, system-ui, sans-serif;
+
+  --color-fundo: oklch(0.16 0.008 260);
+  --color-superficie: oklch(0.21 0.01 260);
+  --color-borda: oklch(0.28 0.012 260);
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  /* Brilho discreto no topo: dá profundidade sem custar imagem nem script. */
+  background:
+    radial-gradient(70rem 40rem at 50% -20%, oklch(0.28 0.06 165 / 0.5), transparent 70%),
+    var(--color-fundo);
+  background-attachment: fixed;
+}
+
+/* Foco visível de verdade. O anel padrão some no fundo escuro, e teclado é a
+   única forma de navegar para quem não usa mouse. */
+:focus-visible {
+  outline: 2px solid oklch(0.78 0.16 165);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Quem pediu menos movimento não deveria ter que aguentar spinner e transição. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Números de placar e cronômetro alinhados em coluna. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

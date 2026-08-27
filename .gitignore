@@ -1,0 +1,10 @@
+node_modules/
+.next/
+.env.local
+next-env.d.ts
+fotos/
+
+# Curadoria: temas e dicas completos ficam fora do repositório público.
+# Ver supabase/seed-exemplo.sql e a nota no README.
+supabase/seed-temas.sql
+supabase/seed-dicas.sql
