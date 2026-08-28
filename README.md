@@ -134,4 +134,4 @@ O [PRD.md](PRD.md) tem o raciocínio completo, incluindo as decisões que foram 
 
 **Âncoras de calibração.** `lib/rubric.ts` tem um array `ANCHORS` vazio, de propósito. Modelo sem exemplo calibrado regride à média e distribui 600–700 para tudo. Preencher exige 3 redações reais corrigidas por um professor — e âncora errada calibra errado, o que é pior que âncora nenhuma. É a maior alavanca de qualidade pendente.
 
-**Fila de correção.** A correção roda na requisição, com polling no cliente. Funciona para o volume atual e é o motivo de o deploy pedir um servidor persistente em vez de função serverless com teto de 60 s.
+**Fila de correção.** A correção roda na requisição, dividida em duas etapas — uma chamada lê a foto, outra avalia — com polling no cliente. Cabe no teto de função serverless e evita repagar a leitura da imagem quando a avaliação falha. Uma fila de verdade só se justifica com volume.

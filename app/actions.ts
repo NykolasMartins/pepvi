@@ -269,7 +269,30 @@ async function downloadImages(paths: string[]) {
  *
  * Idempotente por status: só age em 'grading'.
  */
-export async function gradeMatch(matchId: string) {
+/**
+ * Etapa que a chamada executou. O cliente usa para saber se precisa chamar de
+ * novo.
+ */
+export type EtapaCorrecao =
+  | "transcricao"   // leu a foto; falta avaliar
+  | "avaliacao"     // avaliou e fechou a nota
+  | "reenvio"       // foto ilegível, parou aqui
+  | "ignorado";     // partida não está em estado de correção
+
+/**
+ * Corrige a partida em DUAS requisições, uma etapa por chamada.
+ *
+ * Transcrição e avaliação somadas passam de 60 s com frequência, e função
+ * serverless tem teto — na Vercel Hobby são 60 s. Uma requisição por etapa cabe
+ * folgada em qualquer plano.
+ *
+ * O ganho não é só de prazo: se a avaliação falhar, a transcrição já está
+ * gravada e não é refeita. Não se paga a leitura da foto duas vezes.
+ *
+ * Redação digitada já chega com transcript preenchido, então resolve numa
+ * chamada só.
+ */
+export async function gradeMatch(matchId: string): Promise<EtapaCorrecao> {
   // A partida é confirmada como do usuário da sessão ANTES de qualquer escrita.
   // Daí em diante o pipeline usa service_role: ele lê o Storage privado e grava
   // corrections, coisas que o usuário não pode fazer sozinho.
@@ -289,11 +312,11 @@ export async function gradeMatch(matchId: string) {
   if (error) throw new Error(error.message);
   if (!match) throw new Error("partida não encontrada");
   // grading_failed entra: é o caminho do "tentar de novo" na tela.
-  if (!["grading", "expired", "grading_failed"].includes(match.status)) return;
+  if (!["grading", "expired", "grading_failed"].includes(match.status)) return "ignorado";
 
   const { data: submission } = await supabase
     .from("submissions")
-    .select("image_paths, transcript, source")
+    .select("image_paths, transcript, source, vision_meta")
     .eq("match_id", matchId)
     .maybeSingle();
 
@@ -318,26 +341,18 @@ export async function gradeMatch(matchId: string) {
     .map((d) => (d.hints as unknown as { content: string } | null)?.content)
     .filter((c): c is string => Boolean(c));
 
-  try {
-    // ---- Etapa 1: transcrição -------------------------------------------
-    // Redação digitada não tem caligrafia para ler: nada de chamada de visão,
-    // nada de gate de legibilidade, nada de código na folha.
-    const digitada = submission.source === "typed";
-    let transcript: string;
-    let trUsage = { inTokens: 0, outTokens: 0 };
-    let illegibleCount = 0;
-    let antiReplayCodeFound = true;
+  const digitada = submission.source === "typed";
 
-    if (digitada) {
-      if (!submission.transcript) throw new Error("texto digitado ausente");
-      transcript = submission.transcript;
-    } else {
+  try {
+    // ================= ETAPA 1: transcrição =================
+    //
+    // Só roda se ainda não houver transcrição. A contestação (disputeTranscript)
+    // limpa o campo justamente para forçar a releitura.
+    if (!submission.transcript) {
+      if (digitada) throw new Error("texto digitado ausente");
+
       const images = await downloadImages(submission.image_paths);
       const { parsed: tr, usage } = await transcribe(images, match.anti_replay_code);
-      trUsage = usage;
-      transcript = tr.transcription;
-      illegibleCount = tr.illegibleCount;
-      antiReplayCodeFound = tr.antiReplayCodeFound;
 
       await supabase
         .from("submissions")
@@ -345,6 +360,13 @@ export async function gradeMatch(matchId: string) {
           transcript: tr.transcription,
           legibility: tr.legibility,
           vision_model: VISION_MODEL,
+          // O que a etapa 2 vai precisar e não sobrevive ao fim da requisição.
+          vision_meta: {
+            illegibleCount: tr.illegibleCount,
+            antiReplayCodeFound: tr.antiReplayCodeFound,
+            inTokens: usage.inTokens,
+            outTokens: usage.outTokens,
+          },
         })
         .eq("match_id", matchId);
 
@@ -355,7 +377,7 @@ export async function gradeMatch(matchId: string) {
           .from("matches")
           .update({ status: "needs_reupload" })
           .eq("id", matchId);
-        return;
+        return "reenvio";
       }
 
       // Código ausente na folha não bloqueia: falso positivo (código apagado,
@@ -363,9 +385,23 @@ export async function gradeMatch(matchId: string) {
       if (!tr.antiReplayCodeFound) {
         await supabase.from("matches").update({ flagged: true }).eq("id", matchId);
       }
+
+      // Encerra a requisição aqui. O cliente chama de novo para a avaliação.
+      return "transcricao";
     }
 
-    // ---- Etapa 2: avaliação ---------------------------------------------
+    // ================= ETAPA 2: avaliação =================
+    const transcript = submission.transcript;
+    const meta = (submission.vision_meta ?? {}) as {
+      illegibleCount?: number;
+      antiReplayCodeFound?: boolean;
+      inTokens?: number;
+      outTokens?: number;
+    };
+    const trUsage = { inTokens: meta.inTokens ?? 0, outTokens: meta.outTokens ?? 0 };
+    const illegibleCount = meta.illegibleCount ?? 0;
+    const antiReplayCodeFound = meta.antiReplayCodeFound ?? true;
+
     const { parsed: ev, usage: evUsage } = await evaluate({
       themeTitle: theme.title,
       themeStatement: theme.statement,
@@ -374,7 +410,7 @@ export async function gradeMatch(matchId: string) {
       transcript,
     });
 
-    // ---- Etapa 3: aritmética, em código ---------------------------------
+    // ---- Aritmética, em código ------------------------------------------
     const scores = finalScores(ev);
     const rawScore = scores.c1 + scores.c2 + scores.c3 + scores.c4 + scores.c5;
     // Do tempo gravado, não do status: status é sobrescrito por retry.
@@ -455,6 +491,8 @@ export async function gradeMatch(matchId: string) {
         scoring_version: xp.scoringVersion,
       })
       .eq("id", matchId);
+
+    return "avaliacao";
   } catch (e) {
     // Falha marcada no banco, não engolida: o usuário vê "reprocessando" em vez
     // de uma partida presa em grading para sempre.
@@ -484,7 +522,13 @@ export async function disputeTranscript(matchId: string) {
   if (!submission) throw new Error("nenhuma submissão para contestar");
   if (submission.disputed) throw new Error("esta transcrição já foi contestada uma vez");
 
-  await supabase.from("submissions").update({ disputed: true }).eq("match_id", matchId);
+  // Limpar transcript e vision_meta é o que força a etapa 1 a rodar de novo.
+  // Sem isso, a divisão em duas requisições faria a contestação pular direto
+  // para a avaliação e reavaliar exatamente o mesmo texto contestado.
+  await supabase
+    .from("submissions")
+    .update({ disputed: true, transcript: null, vision_meta: null, legibility: null })
+    .eq("match_id", matchId);
 
   const { error } = await supabase
     .from("matches")

@@ -614,3 +614,15 @@ as $$
     from match_hints
    where match_id = p_match_id;
 $$;
+
+-- ##########################################################################
+-- Correção em duas requisições
+--
+-- Transcrição e avaliação somadas passam de 60s com frequência, e função
+-- serverless tem teto. Cada etapa virou uma requisição.
+--
+-- vision_meta guarda o que a etapa 1 produz e a etapa 2 precisa — contagem de
+-- ilegíveis, se o código estava na folha, tokens gastos. Sem persistir, esses
+-- dados morriam no fim da primeira requisição.
+-- ##########################################################################
+alter table submissions add column if not exists vision_meta jsonb;
