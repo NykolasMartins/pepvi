@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * DOIS clientes, com fronteira deliberada.
@@ -10,29 +10,37 @@ import { createClient } from "@supabase/supabase-js";
  *                     usuário. É o que impede que um `.eq("user_id", …)`
  *                     esquecido vaze dados de outra pessoa.
  *
- *   supabaseAdmin   — service_role, IGNORA RLS. Só para trabalho de servidor
+ *   requireAdmin()  — service_role, IGNORA RLS. Só para trabalho de servidor
  *                     confiável que o usuário não poderia fazer sozinho: ler as
  *                     fotos do Storage e gravar a correção.
  *
  * A regra: se a operação é "o usuário fazendo algo com os próprios dados", use
  * supabaseUser(). Admin é exceção, e cada uso precisa de motivo.
+ *
+ * As variáveis são lidas e validadas na CHAMADA, nunca no carregamento do
+ * módulo. Validar no topo faz o `next build` quebrar em "Failed to collect
+ * configuration": o build avalia os módulos para coletar config de rota, e
+ * ambiente de build não tem — nem deveria ter — segredo de runtime.
  */
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!url || !publishableKey) {
-  throw new Error(
-    "Faltam NEXT_PUBLIC_SUPABASE_URL e/ou NEXT_PUBLIC_SUPABASE_ANON_KEY no .env.local"
-  );
+function exigir(nome: string): string {
+  const valor = process.env[nome];
+  if (!valor) {
+    throw new Error(
+      `Falta a variável de ambiente ${nome}. Local: preencha o .env.local. ` +
+        `Em produção: Project Settings > Environment Variables.`
+    );
+  }
+  return valor;
 }
 
 /** Cliente com a sessão do usuário. Um por requisição — não guarde em módulo. */
 export async function supabaseUser() {
+  const url = exigir("NEXT_PUBLIC_SUPABASE_URL");
+  const publishableKey = exigir("NEXT_PUBLIC_SUPABASE_ANON_KEY");
   const store = await cookies();
 
-  return createServerClient(url!, publishableKey!, {
+  return createServerClient(url, publishableKey, {
     cookies: {
       getAll: () => store.getAll(),
       setAll: (cookiesToSet) => {
@@ -49,19 +57,21 @@ export async function supabaseUser() {
   });
 }
 
+let _admin: SupabaseClient | null = null;
+
 /**
  * Cliente administrativo. Nunca use para ler dados "do usuário logado" —
  * é justamente aí que RLS deixaria de proteger.
  */
-export const supabaseAdmin = serviceRoleKey
-  ? createClient(url, serviceRoleKey, { auth: { persistSession: false } })
-  : null;
-
-export function requireAdmin() {
-  if (!supabaseAdmin) {
-    throw new Error("Falta SUPABASE_SERVICE_ROLE_KEY no .env.local");
+export function requireAdmin(): SupabaseClient {
+  if (!_admin) {
+    _admin = createClient(
+      exigir("NEXT_PUBLIC_SUPABASE_URL"),
+      exigir("SUPABASE_SERVICE_ROLE_KEY"),
+      { auth: { persistSession: false } }
+    );
   }
-  return supabaseAdmin;
+  return _admin;
 }
 
 /**

@@ -76,6 +76,8 @@ Nunca de `status`. `status` é sobrescrito por reprocessamento; `elapsed_seconds
 
 `supabaseUser()` é o padrão — carrega a sessão, RLS vale. `requireAdmin()` (service_role, ignora RLS) aparece em **três** lugares, cada um comentado: URL assinada de upload, leitura do Storage privado, escrita da correção.
 
+Variável de ambiente é lida e validada **na chamada**, nunca no topo do módulo. Validar no topo quebra o `next build` com "Failed to collect configuration": o build avalia os módulos para coletar config de rota, e ambiente de build não tem segredo de runtime. Teste: `mv .env.local .tmp && npm run build` tem de passar.
+
 Ao adicionar leitura de dado do usuário, use `supabaseUser()` e **não** acrescente `.eq("user_id", ...)` — a RLS já filtra. Filtro redundante mascara política frouxa.
 
 ### `hints` não tem política de leitura
