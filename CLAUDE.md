@@ -103,6 +103,7 @@ A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a 
 ## Pendências conhecidas
 
 - **`ANCHORS` vazio em `lib/rubric.ts`.** Sem exemplo calibrado o modelo regride à média (600–700 para tudo). Precisa de 3 redações reais corrigidas por humano. Maior alavanca de qualidade pendente. Âncora errada calibra errado — não inventar.
-- **Correção roda na requisição**, com polling no cliente. Por isso o deploy pede servidor persistente (Render), não função serverless com teto de 60 s.
+- **Correção roda na requisição, dividida em duas etapas** (transcrição, depois avaliação), uma por chamada de `gradeMatch()`. Foi assim que ela passou a caber no teto de 60 s de função serverless. `submissions.vision_meta` carrega o que a etapa 1 produz e a etapa 2 precisa.
+- **`disputeTranscript` limpa `transcript` e `vision_meta`** — é o que força a releitura da foto. Sem isso a contestação reavaliaria o mesmo texto contestado.
 - **Textos motivadores e dicas** priorizam lei e fato histórico verificável em vez de estatística com número, para não ensinar dado errado. Manter essa disciplina ao acrescentar conteúdo.
 - **Deploy ainda não feito.** Ver a seção de hospedagem no PRD.

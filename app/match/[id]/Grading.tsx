@@ -31,9 +31,19 @@ export default function Grading({
   useEffect(() => {
     if (!kickOff || started.current) return;
     started.current = true;
-    gradeMatch(matchId).catch((e) =>
-      setError(e instanceof Error ? e.message : String(e))
-    );
+
+    // Uma chamada por etapa: a correção foi dividida para caber no teto de
+    // função serverless. Encadeia até chegar num estado terminal.
+    (async () => {
+      try {
+        for (let etapa = 0; etapa < 4; etapa++) {
+          const r = await gradeMatch(matchId);
+          if (r !== "transcricao") break;
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
   }, [matchId, kickOff]);
 
   useEffect(() => {
@@ -59,7 +69,7 @@ export default function Grading({
   }, [matchId, router]);
 
   const stage =
-    elapsed < 15 ? "Lendo a caligrafia…" : "Avaliando as 5 competências…";
+    elapsed < 20 ? "Lendo a caligrafia…" : "Avaliando as 5 competências…";
 
   return (
     <section className="space-y-4 rounded-lg border border-zinc-800 p-8 text-center">

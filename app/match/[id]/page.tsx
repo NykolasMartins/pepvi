@@ -10,9 +10,10 @@ import { listHints } from "@/app/actions";
 
 export const dynamic = "force-dynamic";
 
-// A correção pode passar de 60s. Sem isso, a Server Action é cortada no meio
-// em ambiente serverless e a partida fica presa em 'grading'.
-export const maxDuration = 300;
+// 60 s é o teto do plano gratuito da Vercel — e a correção foi dividida em
+// duas requisições (transcrição, depois avaliação) justamente para caber nele.
+// Em servidor persistente (Render) este valor é ignorado.
+export const maxDuration = 60;
 
 type SupportingText = { source?: string; content?: string };
 
