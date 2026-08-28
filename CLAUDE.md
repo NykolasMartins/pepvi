@@ -84,6 +84,25 @@ Ao adicionar leitura de dado do usuário, use `supabaseUser()` e **não** acresc
 
 De propósito. O conteúdo só sai por `abrir_dica()`, que grava a cobrança e devolve o texto na mesma transação. Mandar dica no payload e esconder com CSS transformaria a penalidade em enfeite.
 
+### `useActionState` com função variável é bug
+
+Passar `modo === "x" ? acaoA : acaoB` para `useActionState` **não funciona**: o
+hook guarda a função do render em que criou o `formAction`, então trocar a aba
+muda o rótulo do botão e não a ação enviada. Custou um login que mandava
+cadastro estando em "Entrar".
+
+Uma Server Action só, e o que varia vai em campo `hidden` do formulário. Ver
+`authenticate()` em `app/auth-actions.ts`. Vale para qualquer formulário com
+modo — não repetir o padrão antigo.
+
+### Variável de ambiente se valida na chamada
+
+Nunca no topo do módulo. Validar no escopo do módulo quebra o `next build` com
+"Failed to collect configuration": o build avalia os módulos para coletar
+config de rota, e ambiente de build não tem segredo de runtime.
+
+Teste antes de subir: `mv .env.local .tmp; npm run build` tem de passar.
+
 ### Transcrição é proibida de corrigir
 
 A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a Competência 1 dá nota cheia para todo mundo. Mesma razão pela qual o textarea do modo digitado tem `spellCheck={false}` e os atributos anti-Grammarly — não mexer.
@@ -97,6 +116,8 @@ A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a 
 - **Sem dependência nova sem motivo medido.** Gráficos são SVG inline; não instalar biblioteca de chart.
 - **`node` roda `.ts` nativo** nesta versão. Por isso `tsconfig.json` tem `allowImportingTsExtensions` e os `*.check.ts` importam com extensão.
 - Heredoc de shell quebra com o conteúdo acentuado deste projeto. Para edições grandes, use a ferramenta Write ou um script Python no scratchpad.
+- **O terminal do usuário é PowerShell 5.1: não existe `&&`.** Encadear é `cmd; if ($?) { cmd2 }`, ou um comando por linha. Sugerir `a && b` gera erro de parser.
+- **`/login` dando 404 em dev = `.next` sujo.** Acontece ao rodar `npm run build` e depois `next dev` no mesmo diretório. `rm -rf .next` e subir de novo.
 
 ## Conteúdo fora do repositório
 
@@ -108,4 +129,6 @@ A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a 
 - **Correção roda na requisição, dividida em duas etapas** (transcrição, depois avaliação), uma por chamada de `gradeMatch()`. Foi assim que ela passou a caber no teto de 60 s de função serverless. `submissions.vision_meta` carrega o que a etapa 1 produz e a etapa 2 precisa.
 - **`disputeTranscript` limpa `transcript` e `vision_meta`** — é o que força a releitura da foto. Sem isso a contestação reavaliaria o mesmo texto contestado.
 - **Textos motivadores e dicas** priorizam lei e fato histórico verificável em vez de estatística com número, para não ensinar dado errado. Manter essa disciplina ao acrescentar conteúdo.
-- **Deploy ainda não feito.** Ver a seção de hospedagem no PRD.
+- **Deploy na Vercel**, a partir de `main` no GitHub (repositório público `NykolasMartins/pepvi`). As 4 variáveis de ambiente precisam estar nos três ambientes; variável adicionada depois de um deploy só entra com Redeploy.
+- **Aviso do Next 16:** `middleware` virou `proxy`. Funciona hoje; migrar com `npx @next/codemod@canary middleware-to-proxy .` quando der.
+- **Curadoria só existe no disco desta máquina.** `seed-temas.sql` e `seed-dicas.sql` estão fora do Git. Fazer backup.

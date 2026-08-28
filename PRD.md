@@ -1,9 +1,14 @@
 # PEPVI — Documento de Arquitetura e Planejamento
 
 **Produto:** jogo de treinamento de redação dissertativo-argumentativa (padrão ENEM) com mecânica de *time attack*.
-**Status:** Fases 0 a 3 implementadas. Falta a Fase 4 (retenção) e as âncoras da rubrica.
-**Data:** 2026-08-25
-**Versão:** 0.4 — Fases 1 a 3 implementadas, autenticação real, redação digitada, 22 temas.
+**Status:** MVP completo e publicado na Vercel. Falta calibrar as âncoras da rubrica.
+**Data:** 2026-08-28
+**Versão:** 0.5
+
+Implementado além do MVP original: autenticação real, redação digitada, dicas
+com penalidade, dashboard com histórico e pentágono, níveis de XP, ranking
+semanal/mensal/histórico, dificuldades desbloqueáveis, amigos por código e
+duelos assíncronos.
 
 ---
 
@@ -26,7 +31,7 @@ O maior risco do projeto **não** é o game loop. É a acurácia da leitura de c
 ### No MVP
 
 - Cadastro/login.
-- Banco de 20 temas com textos motivadores (14 propostas oficiais do ENEM 2011–2024 + 6 de simulado).
+- Banco de 22 temas com textos motivadores (14 propostas oficiais do ENEM 2011–2024 + 8 de simulado).
 - Sorteio sem repetição por usuário.
 - Cronômetro server-authoritative de 90 min (configurável).
 - Dicas de repertório sociocultural com penalidade registrada.
@@ -44,14 +49,26 @@ Duas consequências, ambas tratadas:
 
 O modo digitado também pula a etapa de visão inteira: mais rápido, mais barato e sem gate de legibilidade.
 
-### Fora do MVP (declarado, não esquecido)
+### Construído depois do MVP
+
+Ranking (semanal, mensal, histórico), amigos por código de 6 caracteres e
+duelos assíncronos entraram — eram "fora do MVP" e foram revistos. O ranking é
+uma função `security definer`, porque a RLS de `matches` restringe a
+`auth.uid()` e afrouxá-la para montar um placar exporia as redações de todos.
+
+Também entraram: níveis de XP, dificuldades desbloqueáveis com multiplicador, e
+o dashboard com pentágono e histórico.
+
+### Fora do escopo (declarado, não esquecido)
 
 - App nativo. É PWA responsivo; a câmera do celular já funciona via `<input type="file" capture>`.
-- Ranking social, ligas, amigos.
+- **Duelo ao vivo.** Só o assíncrono existe. Ao vivo exigiria Realtime, sala de espera e tratamento de desconexão — e esbarra num problema de produto: a partida dura 90 min, e marcar 90 min simultâneos com um amigo quase nunca acontece.
+- Ligas e temporadas.
 - Pagamento/assinatura.
 - Contestação de nota com revisão humana.
-- Multiplayer / partidas simultâneas.
 - Geração de temas por IA.
+- **Migrations de verdade.** Os SQL são scripts com ordem manual. Trocar por `supabase/migrations/` quando entrar uma segunda pessoa ou um ambiente de staging.
+- **LGPD.** O produto guarda e-mail, redações e notas. Política de privacidade e exclusão de conta são obrigação antes de cobrar de alguém.
 
 ---
 
@@ -62,7 +79,7 @@ O modo digitado também pula a etapa de visão inteira: mais rápido, mais barat
 | Frontend + Backend | **Next.js (App Router) + TypeScript** | Um deploy só. Route Handlers são o backend; não há motivo para um Express separado. |
 | Banco / Auth / Storage | **Supabase** (Postgres + Auth + Storage + RLS) | Autenticação, upload de imagem e Postgres gerenciado prontos. Escrever isso à mão custa duas semanas e não diferencia o produto. |
 | IA | **Google Gen AI SDK (`@google/genai`)** | Um provedor para visão e avaliação. Modelo definido na Fase 0. Ver Seção 6. |
-| Hospedagem | **Vercel** | Integração direta com Next.js. |
+| Hospedagem | **Vercel** | Integração direta com Next.js, sem hibernação no plano gratuito. Exigiu dividir a correção em duas requisições — ver 6.5. |
 | Estado do cliente | **TanStack Query** | O estado que importa é servidor. Não instale Redux/Zustand para isso. |
 
 **Não entram:** Redis, fila de mensagens, WebSocket, cron externo, microserviços, Docker Compose local. Cada um desses resolve um problema que este produto ainda não tem. O item 4.5 mostra como evitar o cron; o 6.5, como evitar a fila.
