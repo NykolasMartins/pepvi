@@ -21,7 +21,7 @@ function mensagem(raw: string): string {
   // Mensagens do Supabase vêm em inglês e algumas vazam detalhe interno.
   if (/Invalid login credentials/i.test(raw)) return "E-mail ou senha incorretos.";
   if (/already registered|already been registered/i.test(raw))
-    return "Este e-mail já tem conta. Tente entrar.";
+    return "Este e-mail já tem conta. Volte para “Entrar”.";
   if (/Password should be at least/i.test(raw))
     return "A senha precisa de pelo menos 6 caracteres.";
   if (/Email not confirmed/i.test(raw))
@@ -31,10 +31,24 @@ function mensagem(raw: string): string {
   return raw;
 }
 
-export async function signIn(
+/**
+ * Entrar e criar conta na MESMA Server Action, com o modo vindo do formulário.
+ *
+ * Antes eram duas ações e o componente escolhia qual passar para
+ * `useActionState`. Isso tem um bug silencioso: o hook guarda a função do
+ * render em que o `formAction` foi criado, então trocar de aba não trocava a
+ * ação — quem clicava em "Criar conta" e voltava para "Entrar" continuava
+ * enviando um cadastro, e recebia "este e-mail já tem conta" estando na aba de
+ * login.
+ *
+ * Com uma função só, não existe função para ficar velha. O modo é um campo do
+ * formulário, e o servidor lê o que foi enviado de fato.
+ */
+export async function authenticate(
   _prev: AuthState,
   formData: FormData
 ): Promise<AuthState> {
+  const modo = formData.get("modo") === "criar" ? "criar" : "entrar";
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
   const next = String(formData.get("next") ?? "/") || "/";
@@ -42,27 +56,21 @@ export async function signIn(
   if (!email || !password) return { error: "Preencha e-mail e senha." };
 
   const supabase = await supabaseUser();
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
 
-  if (error) return { error: mensagem(error.message) };
+  if (modo === "entrar") {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: mensagem(error.message) };
 
-  revalidatePath("/", "layout");
-  redirect(next.startsWith("/") ? next : "/");
-}
+    revalidatePath("/", "layout");
+    // redirect() funciona lançando — precisa ficar fora de try/catch.
+    redirect(next.startsWith("/") ? next : "/");
+  }
 
-export async function signUp(
-  _prev: AuthState,
-  formData: FormData
-): Promise<AuthState> {
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  if (password.length < 6) {
+    return { error: "A senha precisa de pelo menos 6 caracteres." };
+  }
 
-  if (!email || !password) return { error: "Preencha e-mail e senha." };
-  if (password.length < 6) return { error: "A senha precisa de pelo menos 6 caracteres." };
-
-  const supabase = await supabaseUser();
   const { data, error } = await supabase.auth.signUp({ email, password });
-
   if (error) return { error: mensagem(error.message) };
 
   // Sem sessão = o projeto exige confirmação por e-mail.
