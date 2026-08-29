@@ -5,9 +5,9 @@ export const dynamic = "force-dynamic";
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; erro?: string }>;
 }) {
-  const { next } = await searchParams;
+  const { next, erro } = await searchParams;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-8 px-6 py-16">
@@ -19,7 +19,7 @@ export default async function LoginPage({
         </p>
       </div>
 
-      <LoginForm next={next ?? "/"} />
+      <LoginForm next={next ?? "/"} erro={erro} />
     </main>
   );
 }

@@ -8,3 +8,6 @@ fotos/
 # Ver supabase/seed-exemplo.sql e a nota no README.
 supabase/seed-temas.sql
 supabase/seed-dicas.sql
+
+# Cache incremental do tsc (gerado por `tsc --noEmit`).
+*.tsbuildinfo

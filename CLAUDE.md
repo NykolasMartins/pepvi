@@ -131,4 +131,13 @@ A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a 
 - **Textos motivadores e dicas** priorizam lei e fato histórico verificável em vez de estatística com número, para não ensinar dado errado. Manter essa disciplina ao acrescentar conteúdo.
 - **Deploy na Vercel**, a partir de `main` no GitHub (repositório público `NykolasMartins/pepvi`). As 4 variáveis de ambiente precisam estar nos três ambientes; variável adicionada depois de um deploy só entra com Redeploy.
 - **Aviso do Next 16:** `middleware` virou `proxy`. Funciona hoje; migrar com `npx @next/codemod@canary middleware-to-proxy .` quando der.
+- **Recuperação de senha depende de config no painel.** `resetPasswordForEmail`
+  manda o link com `redirectTo` = `<origem>/auth/confirm?next=/nova-senha`, e a
+  origem vem do header `host` da requisição — não de variável de ambiente, para
+  acertar localhost, preview e produção sem cadastrar nada. Em troca,
+  **Authentication > URL Configuration > Redirect URLs** precisa listar
+  `http://localhost:3000/**` e `https://<dominio>/**`; sem isso o Supabase
+  ignora o `redirectTo` e joga na Site URL, o `code` se perde e o link "funciona"
+  caindo na tela de login. `/auth/confirm` aceita `code` (template padrão) e
+  `token_hash` (template reescrito) porque trocar o template do e-mail é comum.
 - **Curadoria só existe no disco desta máquina.** `seed-temas.sql` e `seed-dicas.sql` estão fora do Git. Fazer backup.
