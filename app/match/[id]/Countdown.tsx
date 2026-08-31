@@ -22,12 +22,23 @@ import { useRouter } from "next/navigation";
 export default function Countdown({
   deadline,
   serverNow,
+  pausedAt = null,
 }: {
   deadline: string;
   serverNow: string;
+  /**
+   * Instante em que a partida foi pausada, ou null se está correndo.
+   *
+   * Pausado, o restante é `deadline - paused_at` e não se mexe mais: os dois
+   * são absolutos e vêm do banco, então continua não havendo contador no
+   * cliente. Sem isso o relógio seguiria descendo por cima de um prazo que o
+   * servidor congelou, e chegaria a 00:00 numa partida que não expirou.
+   */
+  pausedAt?: string | null;
 }) {
   const router = useRouter();
   const deadlineMs = new Date(deadline).getTime();
+  const pausedMs = pausedAt ? new Date(pausedAt).getTime() : null;
 
   // Desvio entre o relógio do navegador e o do servidor, medido uma vez no
   // primeiro tick do cliente.
@@ -39,12 +50,17 @@ export default function Countdown({
     if (offset.current === null) {
       offset.current = new Date(serverNow).getTime() - Date.now();
     }
+    if (pausedMs !== null) {
+      // Valor fixo, sem intervalo: não há o que atualizar 4x por segundo.
+      setRemaining(deadlineMs - pausedMs);
+      return;
+    }
     const tick = () =>
       setRemaining(deadlineMs - (Date.now() + (offset.current ?? 0)));
     tick();
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
-  }, [deadlineMs, serverNow]);
+  }, [deadlineMs, serverNow, pausedMs]);
 
   useEffect(() => {
     // Timer de aba em segundo plano é estrangulado pelo navegador. Ao voltar,
@@ -69,13 +85,16 @@ export default function Countdown({
     );
   }
 
-  const expired = remaining <= 0;
+  const pausado = pausedMs !== null;
+  const expired = !pausado && remaining <= 0;
   const totalSeconds = Math.max(0, Math.floor(remaining / 1000));
   const hh = String(Math.floor(totalSeconds / 3600)).padStart(2, "0");
   const mm = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, "0");
   const ss = String(totalSeconds % 60).padStart(2, "0");
 
-  const color = expired
+  const color = pausado
+    ? "text-zinc-500"
+    : expired
     ? "text-red-500"
     : totalSeconds < 300
       ? "text-red-400"
@@ -89,9 +108,11 @@ export default function Countdown({
         {hh}:{mm}:{ss}
       </div>
       <p className="mt-2 text-xs text-zinc-500">
-        {expired
-          ? "Tempo esgotado — o envio não vale mais XP."
-          : `Envie até ${new Date(deadlineMs).toLocaleTimeString("pt-BR")}`}
+        {pausado
+          ? "Pausado — o relógio volta de onde parou."
+          : expired
+            ? "Tempo esgotado — o envio não vale mais XP."
+            : `Envie até ${new Date(deadlineMs).toLocaleTimeString("pt-BR")}`}
       </p>
     </div>
   );

@@ -17,6 +17,7 @@ type LinhaBanco = {
   speed_bonus: number | null;
   xp_final: number | null;
   is_replay: boolean;
+  is_free: boolean;
   themes: { title: string } | null;
   corrections: { attempt: number; c1: number; c2: number; c3: number; c4: number; c5: number; raw_score: number }[];
   // Objeto, NÃO array: submissions.match_id é UNIQUE, então o PostgREST trata
@@ -34,7 +35,7 @@ export default async function ProgressoPage() {
     await supabase
       .from("matches")
       .select(
-        "id, status, created_at, elapsed_seconds, raw_score, hint_penalty, speed_bonus, xp_final, is_replay, themes(title), corrections(attempt, c1, c2, c3, c4, c5, raw_score), submissions(source), match_hints(cost_xp)"
+        "id, status, created_at, elapsed_seconds, raw_score, hint_penalty, speed_bonus, xp_final, is_replay, is_free, themes(title), corrections(attempt, c1, c2, c3, c4, c5, raw_score), submissions(source), match_hints(cost_xp)"
       )
       .order("created_at", { ascending: false })
   ) as unknown as LinhaBanco[];
@@ -54,6 +55,7 @@ export default async function ProgressoPage() {
         status: l.status,
         expirada: l.status === "expired",
         isReplay: l.is_replay,
+        livre: l.is_free,
         origem: l.submissions?.source ?? null,
         notaBruta: c.raw_score,
         xpFinal: l.xp_final ?? 0,
@@ -180,6 +182,7 @@ export default async function ProgressoPage() {
                               {m.dicasAbertas} dica{m.dicasAbertas === 1 ? "" : "s"}
                             </span>
                           )}
+                          {m.livre && <span className="text-zinc-400">treino livre</span>}
                           {m.isReplay && <span className="text-amber-600">repetição</span>}
                           {m.expirada && <span className="text-red-500">expirada</span>}
                         </p>
@@ -189,9 +192,11 @@ export default async function ProgressoPage() {
                           {m.notaBruta}
                         </p>
                         <p
-                          className={`font-mono text-xs ${m.expirada ? "text-zinc-600" : "text-emerald-400"}`}
+                          className={`font-mono text-xs ${
+                            m.livre || m.expirada ? "text-zinc-600" : "text-emerald-400"
+                          }`}
                         >
-                          {m.xpFinal} XP
+                          {m.livre ? "sem XP" : `${m.xpFinal} XP`}
                         </p>
                       </div>
                     </div>

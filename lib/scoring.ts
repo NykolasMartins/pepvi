@@ -43,6 +43,16 @@ export type XpInput = {
    * dificuldade maior pagaria MENOS — incentivo invertido.
    */
   difficultyMultiplier?: number;
+  /**
+   * Treino livre: o jogador escolheu tema e relógio, então nada aqui pontua.
+   *
+   * A trava é redundante — iniciar_partida marca is_free e xp_total já exclui
+   * essas partidas — e é de propósito. O XP nasce nesta função; deixar a
+   * proteção só na consulta significa que qualquer leitura futura que esqueça
+   * o `and not is_free` passa a pagar por um tempo que o próprio jogador
+   * definiu.
+   */
+  isFree?: boolean;
 };
 
 export type XpResult = {
@@ -60,8 +70,9 @@ export function computeXp({
   expired,
   isReplay = false,
   difficultyMultiplier = 1,
+  isFree = false,
 }: XpInput): XpResult {
-  if (expired) {
+  if (isFree || expired) {
     return { penalty: 0, speedBonus: 0, xpFinal: 0, scoringVersion: SCORING.version };
   }
 

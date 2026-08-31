@@ -219,6 +219,10 @@ as $$
         where m.theme_id = t.id
           and m.user_id in (p_a, p_b)
           and m.status <> 'cancelled'
+          -- Treino livre não queima tema, aqui pelo mesmo motivo do sorteio
+          -- comum: senão dava para escolher os temas de um treino e estreitar
+          -- o pool do duelo do adversário.
+          and not m.is_free
      )
    order by random()
    limit 1;

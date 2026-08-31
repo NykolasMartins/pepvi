@@ -40,6 +40,8 @@ supabase/seed-temas.sql + seed-dicas.sql   (local; no repo público: seed-exempl
 
 Os três últimos dependem de `difficulties` e `xp_total()`, criados no segundo.
 
+**O treino livre mudou os quatro primeiros** (colunas `is_free`, `paused_at`, `paused_seconds`, `themes.created_by`; a policy `themes_read`; os dois sorteios de tema; `xp_total`, `ranking`, `abrir_dica`, `enviar_partida`, `pausar_partida`, `retomar_partida`, `iniciar_partida`). São idempotentes: rode os quatro de novo, nesta ordem. A consulta no fim de `fix-game-loop.sql` confere — `versao_nova` tem de ser 1.
+
 ---
 
 ## Invariantes — quebrar qualquer um destes é regressão
@@ -56,6 +58,12 @@ Antes de criar função, `grep -rn "function <nome>" supabase/`. Se já existe, 
 
 Nunca aceitar duração ou timestamp vindo do cliente. `iniciar_partida` recebe `p_difficulty`, não segundos, exatamente por isso.
 
+A pausa (`pausar_partida` / `retomar_partida`) é a segunda exceção, e pela mesma razão: só existe onde não há XP. Ela não inventa um contador — retomar **empurra o `deadline`**, então o prazo continua sendo um instante absoluto vindo do banco e o cronômetro do cliente continua cosmético. `paused_seconds` acumula o que já passou, e `enviar_partida` desconta ele mais a pausa aberta no instante do envio.
+
+**Partida pausada não expira — mas tem teto de 24 h.** Sem o teto ela ficaria viva para sempre em cima de `one_active_match`, e um treino pausado e esquecido impediria toda partida nova: o mesmo travamento de game loop que já custou três rodadas, com outra causa. O valor aparece em **três** lugares que precisam concordar — a materialização em `iniciar_partida`, o `retomar_partida`, e `PAUSE_TIMEOUT_MS` em `lib/matchStatus.ts`. Quem lê `effectiveStatus` precisa passar `paused_at`, senão declara expirada uma partida congelada.
+
+A exceção é `p_minutes`, do treino livre — e ela só existe porque lá não há XP. A regra que a proibia era "escolher os segundos é escolher a própria dificuldade, e o bônus de velocidade é calculado sobre ela": sem XP em jogo não há o que inflar. Piso e teto (5 a 240 min) ficam no Postgres; `lib/treinoLivre.ts` só evita o seletor oferecer o que o banco vai recusar.
+
 ### Regra de nota mora em código, não no prompt
 
 O modelo reporta **evidência** (booleanos, contagens); `lib/enem.ts` aplica o **teto**. Tetos nunca sobem nota, só limitam, e cada um devolve um `motivo` que vira feedback na tela.
@@ -71,6 +79,33 @@ Onde uma restrição **física** lê a coluna — o índice parcial `one_active_
 ### Elegibilidade a XP vem de `elapsed_seconds`
 
 Nunca de `status`. `status` é sobrescrito por reprocessamento; `elapsed_seconds` é gravado uma vez. Ver `isLate()`.
+
+### Treino livre não pontua, e a trava é em cinco lugares
+
+`matches.is_free`. Coluna própria, não `difficulty = 'livre'`: `difficulty` carrega o `xp_multiplier` e é lida na correção, e empilhar "não vale nada" nela faria uma coluna significar duas coisas.
+
+O que depende de `is_free`, e por quê:
+
+| Onde | Regra |
+| --- | --- |
+| `computeXp()` | `isFree` devolve zero antes de qualquer conta |
+| `xp_total()` | `and not is_free` — senão vira XP e desbloqueio de graça |
+| `ranking()` | idem, e `partidas` é o critério de desempate |
+| `sortear_tema` e `sortear_tema_duelo` | `and not m.is_free` — treino **não queima** tema |
+| `abrir_dica()` | recusa: sem XP a dica não tem preço |
+| `pausar_partida()` | recusa fora do livre: parar o relógio infla o bônus de velocidade |
+
+A redundância é deliberada. O XP nasce em `computeXp`; deixar a proteção só na consulta significa que a próxima leitura que esquecer o filtro passa a pagar.
+
+**Sem dicas no treino livre.** O jogador escolhe o tema ali. Liberar dica seria abrir caminho para ler repertório e tese de qualquer tema de graça, com calma, antes de encarar o mesmo tema valendo.
+
+**O treino livre não queima tema** — daí `listThemes()` marcar o que já foi feito, e o "temas inéditos" do lobby contar só partidas com `is_free = false`.
+
+**Tema escrito pelo jogador é uma linha em `themes` com `created_by` e `active = false`**, não uma coluna `custom_theme` em `matches`. `theme_id` é NOT NULL com FK, e a correção, o resultado e o histórico leem o tema por esse join — uma segunda forma de guardar tema viraria um `coalesce` em cada um deles, e o primeiro esquecido mostraria "(tema removido)". `active = false` é o que mantém o tema fora da roleta sem `sortear_tema` precisar saber que ele existe.
+
+O **enunciado é montado em `iniciar_partida`**, nunca recebido do cliente: ele viaja junto do tema no prompt de correção, e a instrução sobre direitos humanos que a Competência 5 cobra não pode depender do que veio no POST. Índice único parcial `themes_custom_por_usuario` dedupe por `(created_by, lower(title))` — reescrever o mesmo tema é o caso de uso, e sem ele cada treino criaria uma linha nova.
+
+`themes_read` deixou de ser `using (true)`: tema de treino é escrita pessoal, e a política antiga vazaria o de todo mundo para todo mundo.
 
 ### Dois clientes Supabase
 

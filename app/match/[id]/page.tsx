@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import Countdown from "./Countdown";
+import Pausa from "./Pausa";
 import SubmitPanel from "./SubmitPanel";
 import Grading from "./Grading";
 import Hints from "./Hints";
@@ -29,7 +30,7 @@ export default async function MatchPage({
     await supabase
       .from("matches")
       .select(
-        "id, status, started_at, submitted_at, duration_seconds, deadline, anti_replay_code, is_replay, duel_id, themes(title, statement, supporting_texts)"
+        "id, status, started_at, submitted_at, duration_seconds, deadline, paused_at, anti_replay_code, is_replay, is_free, duel_id, themes(title, statement, supporting_texts, created_by)"
       )
       .eq("id", id)
       .maybeSingle()
@@ -43,6 +44,9 @@ export default async function MatchPage({
     status: match.status as MatchStatus,
     deadline: match.deadline,
     submitted_at: match.submitted_at,
+    // Sem isto, uma partida pausada além do prazo original seria exibida como
+    // expirada — o deadline dela está congelado, mas now() não para.
+    paused_at: match.paused_at,
   });
 
   if (status === "graded") redirect(`/match/${id}/result`);
@@ -51,21 +55,35 @@ export default async function MatchPage({
     title: string;
     statement: string;
     supporting_texts: SupportingText[];
+    created_by: string | null;
   };
+  // created_by não-null = tema escrito pelo próprio jogador no treino livre.
+  const temaProprio = Boolean(theme.created_by);
 
   // serverNow sai do mesmo servidor que gerou o deadline: é isso que permite
   // ao cliente corrigir o desvio do próprio relógio.
   const serverNow = new Date().toISOString();
-  const timeUp = new Date(match.deadline).getTime() <= Date.now();
+  const pausado = Boolean(match.paused_at);
+  const timeUp = !pausado && new Date(match.deadline).getTime() <= Date.now();
 
   // Metadados sempre; conteúdo só das já abertas. Quem decide isso é a função
   // no Postgres, não este componente.
-  const hints = status === "in_progress" ? await listHints(id) : [];
+  //
+  // Treino livre não tem dicas: lá o tema é escolhido e não há XP para pagar
+  // por elas, então liberá-las seria entregar o repertório de qualquer tema de
+  // graça. abrir_dica() recusa de qualquer forma — isto só evita desenhar um
+  // botão que vai dar erro.
+  const hints =
+    status === "in_progress" && !match.is_free ? await listHints(id) : [];
 
   return (
     <main className="mx-auto max-w-3xl px-5 py-8">
       <header className="sticky top-0 z-40 -mx-5 mb-8 border-b border-borda/60 bg-fundo/95 px-5 py-4 backdrop-blur">
-        <Countdown deadline={match.deadline} serverNow={serverNow} />
+        <Countdown
+          deadline={match.deadline}
+          serverNow={serverNow}
+          pausedAt={match.paused_at}
+        />
         <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs text-zinc-500">
           <span>
             Código da folha:{" "}
@@ -75,6 +93,18 @@ export default async function MatchPage({
           </span>
           <span>·</span>
           <span>{Math.round(match.duration_seconds / 60)} min</span>
+          {match.is_free && (
+            <>
+              <span>·</span>
+              <span className="text-zinc-400">treino livre · sem XP</span>
+            </>
+          )}
+          {pausado && (
+            <>
+              <span>·</span>
+              <span className="text-amber-400">pausado</span>
+            </>
+          )}
           {match.is_replay && (
             <>
               <span>·</span>
@@ -94,7 +124,7 @@ export default async function MatchPage({
                 ⚔ duelo
               </span>
             )}
-            Tema sorteado
+            {temaProprio ? "Seu tema" : match.is_free ? "Tema escolhido" : "Tema sorteado"}
           </p>
           <h1 className="mt-2 font-display text-2xl font-bold leading-snug">{theme.title}</h1>
         </div>
@@ -102,6 +132,13 @@ export default async function MatchPage({
         <p className="rounded-lg bg-zinc-900 p-4 text-sm leading-relaxed text-zinc-300">
           {theme.statement}
         </p>
+
+        {temaProprio && (
+          <p className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-xs leading-relaxed text-zinc-500">
+            Tema escrito por você, então não há textos motivadores — todo o
+            repertório da Competência 2 terá de ser seu.
+          </p>
+        )}
 
         {theme.supporting_texts?.length > 0 && (
           <section className="space-y-3">
@@ -122,7 +159,13 @@ export default async function MatchPage({
           </section>
         )}
 
-        {status === "in_progress" && <Hints hints={hints} />}
+        {/* Só no treino livre. Valendo XP, parar o relógio é inflar o bônus de
+            velocidade — e a recusa também está em pausar_partida(). */}
+        {status === "in_progress" && match.is_free && (
+          <Pausa matchId={match.id} pausado={pausado} />
+        )}
+
+        {status === "in_progress" && hints.length > 0 && <Hints hints={hints} />}
 
         {status === "in_progress" && (
           <SubmitPanel
@@ -165,8 +208,8 @@ export default async function MatchPage({
 
         {status === "expired" && (
           <p className="rounded-lg bg-red-950/50 p-4 text-center text-sm text-red-300">
-            Esta partida expirou. Ela é corrigida para você receber o feedback,
-            mas não paga XP.
+            Esta partida expirou. Ela é corrigida para você receber o feedback
+            {match.is_free ? "." : ", mas não paga XP."}
           </p>
         )}
 

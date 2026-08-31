@@ -1,10 +1,17 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { supabaseUser, requireAdmin, requireUser } from "@/lib/supabase";
 import { computeXp } from "@/lib/scoring";
 import { finalScores } from "@/lib/enem";
 import { effectiveStatus, isLate, type MatchStatus } from "@/lib/matchStatus";
+import {
+  TREINO_LIVRE_MIN_MINUTOS,
+  TREINO_LIVRE_MAX_MINUTOS,
+  TEMA_LIVRE_MIN_CHARS,
+  TEMA_LIVRE_MAX_CHARS,
+} from "@/lib/treinoLivre";
 import {
   transcribe,
   evaluate,
@@ -97,6 +104,118 @@ export async function startMatch(dificuldade: string = "padrao") {
   if (error) throw new Error(error.message);
 
   redirect(`/match/${matchId}`);
+}
+
+// --------------------------------------------------------------------------
+// Treino livre
+// --------------------------------------------------------------------------
+
+export type TemaDaLista = {
+  id: string;
+  title: string;
+  jogado: boolean;
+};
+
+/**
+ * Temas para escolher no treino livre.
+ *
+ * Só id e título: o enunciado e os textos motivadores continuam saindo na
+ * página da partida. Mandar a proposta inteira aqui seria entregar o conteúdo
+ * de todos os temas na primeira carga do lobby.
+ *
+ * `jogado` é informativo — no treino livre repetir é permitido, e saber o que
+ * já foi feito é justamente o que ajuda a escolher o que treinar de novo.
+ */
+export async function listThemes(): Promise<TemaDaLista[]> {
+  const supabase = await supabaseUser();
+
+  // Sem filtro por user_id em matches: a RLS restringe a auth.uid().
+  const [temas, minhas] = await Promise.all([
+    supabase.from("themes").select("id, title").eq("active", true).order("title"),
+    supabase.from("matches").select("theme_id").neq("status", "cancelled"),
+  ]);
+
+  if (temas.error) throw new Error(temas.error.message);
+  if (minhas.error) throw new Error(minhas.error.message);
+
+  const jogados = new Set((minhas.data ?? []).map((m) => m.theme_id));
+  return (temas.data ?? []).map((t) => ({
+    id: t.id,
+    title: t.title,
+    jogado: jogados.has(t.id),
+  }));
+}
+
+/**
+ * Treino livre: o jogador escreve o próprio tema, escolhe o relógio, e nada
+ * disso paga XP.
+ *
+ * Três caminhos para o tema, nesta precedência: o texto digitado, um tema do
+ * catálogo, ou aleatório. Quem resolve é iniciar_partida — e o ENUNCIADO é
+ * montado lá, não aqui e muito menos no cliente: ele acompanha o tema no prompt
+ * de correção, e a instrução sobre direitos humanos que a Competência 5 cobra
+ * não pode depender do que veio no POST.
+ *
+ * Mesma função do Postgres da partida comum. A regra de UMA partida ativa por
+ * usuário mora lá dentro, e uma segunda porta de entrada seria uma segunda
+ * cópia dela.
+ *
+ * Os limites aparecem duas vezes — aqui e em iniciar_partida. O que vale é o do
+ * banco; este só evita a ida ao servidor.
+ */
+export async function startFreeMatch(
+  tema: string | null,
+  themeId: string | null,
+  minutos: number
+) {
+  if (!Number.isInteger(minutos) || minutos < TREINO_LIVRE_MIN_MINUTOS || minutos > TREINO_LIVRE_MAX_MINUTOS) {
+    throw new Error(
+      `escolha entre ${TREINO_LIVRE_MIN_MINUTOS} e ${TREINO_LIVRE_MAX_MINUTOS} minutos`
+    );
+  }
+
+  const escrito = tema?.trim() || null;
+  if (escrito && (escrito.length < TEMA_LIVRE_MIN_CHARS || escrito.length > TEMA_LIVRE_MAX_CHARS)) {
+    throw new Error(
+      `o tema precisa ter de ${TEMA_LIVRE_MIN_CHARS} a ${TEMA_LIVRE_MAX_CHARS} caracteres`
+    );
+  }
+
+  const supabase = await supabaseUser();
+  const { data: matchId, error } = await supabase.rpc("iniciar_partida", {
+    p_tema_livre: escrito,
+    p_theme_id: escrito ? null : themeId,
+    p_minutes: minutos,
+  });
+
+  if (error) throw new Error(error.message);
+
+  redirect(`/match/${matchId}`);
+}
+
+/**
+ * Pausa e retomada — treino livre e só.
+ *
+ * A recusa mora em pausar_partida(), no Postgres. Valendo XP, parar o relógio é
+ * inflar o bônus de velocidade diretamente: esconder o botão não impediria o
+ * POST, então a regra não pode viver na tela.
+ *
+ * Nenhuma das duas recebe timestamp. Quem marca o instante da pausa e quem
+ * empurra o deadline é o banco, com o relógio do banco — a mesma razão pela
+ * qual iniciar_partida não aceita `started_at`.
+ */
+export async function pauseMatch(matchId: string) {
+  const supabase = await supabaseUser();
+  const { error } = await supabase.rpc("pausar_partida", { p_match_id: matchId });
+  if (error) throw new Error(error.message);
+  revalidatePath(`/match/${matchId}`);
+}
+
+export async function resumeMatch(matchId: string) {
+  const supabase = await supabaseUser();
+  const { error } = await supabase.rpc("retomar_partida", { p_match_id: matchId });
+  if (error) throw new Error(error.message);
+  revalidatePath(`/match/${matchId}`);
 }
 
 // ==========================================================================
@@ -231,7 +350,7 @@ export async function getMatchStatus(matchId: string) {
   const supabase = await supabaseUser();
   const { data, error } = await supabase
     .from("matches")
-    .select("status, deadline, submitted_at, xp_final")
+    .select("status, deadline, submitted_at, paused_at, xp_final")
     .eq("id", matchId)
     .maybeSingle();
 
@@ -243,6 +362,7 @@ export async function getMatchStatus(matchId: string) {
       status: data.status as MatchStatus,
       deadline: data.deadline,
       submitted_at: data.submitted_at,
+      paused_at: data.paused_at,
     }),
     xpFinal: data.xp_final as number | null,
   };
@@ -303,7 +423,7 @@ export async function gradeMatch(matchId: string): Promise<EtapaCorrecao> {
   const { data: match, error } = await supabase
     .from("matches")
     .select(
-      "id, status, elapsed_seconds, duration_seconds, is_replay, difficulty, anti_replay_code, themes(title, statement, supporting_texts)"
+      "id, status, elapsed_seconds, duration_seconds, is_replay, is_free, difficulty, anti_replay_code, themes(title, statement, supporting_texts)"
     )
     .eq("id", matchId)
     .eq("user_id", userId)
@@ -438,6 +558,9 @@ export async function gradeMatch(matchId: string): Promise<EtapaCorrecao> {
       durationSeconds: match.duration_seconds,
       expired,
       isReplay: match.is_replay,
+      // A correção do treino livre é igual à das outras — mesma rubrica, mesmo
+      // modelo, mesmos tetos. O que muda é só o que ela paga.
+      isFree: match.is_free,
     });
 
     const { data: last } = await supabase

@@ -63,6 +63,28 @@ create table if not exists themes (
 );
 
 -- ==========================================================================
+-- Tema escrito pelo próprio jogador (treino livre).
+--
+-- Uma linha em themes, e não uma coluna `custom_theme text` em matches:
+-- theme_id é NOT NULL com FK, e todo o resto do sistema — a correção, a tela de
+-- resultado, o histórico do progresso — lê o tema por esse join. Uma segunda
+-- forma de guardar tema significaria um `coalesce` em cada um desses lugares, e
+-- o primeiro que esquecesse mostraria "(tema removido)".
+--
+-- active = false é o que mantém o tema fora da roleta: sortear_tema e
+-- sortear_tema_duelo já filtram por active, então não precisam saber que isto
+-- existe.
+-- ==========================================================================
+alter table themes add column if not exists created_by uuid references profiles(id) on delete cascade;
+
+-- Repetir o mesmo tema é o caso de uso do treino livre — reescrever o texto
+-- idêntico não pode criar uma linha nova a cada vez. Parcial porque os temas do
+-- catálogo têm created_by null e vários poderiam colidir por título.
+create unique index if not exists themes_custom_por_usuario
+  on themes (created_by, lower(title))
+  where created_by is not null;
+
+-- ==========================================================================
 -- matches
 -- ==========================================================================
 do $$ begin
@@ -120,6 +142,39 @@ create index if not exists matches_user_theme on matches (user_id, theme_id);
 create index if not exists matches_user_recent on matches (user_id, created_at desc);
 
 -- ==========================================================================
+-- Treino livre: partida sem valor competitivo.
+--
+-- Coluna própria, e não difficulty = 'livre'. difficulty carrega o
+-- xp_multiplier e é lida na correção; empilhar "não vale nada" nela faria uma
+-- coluna significar duas coisas, e a primeira consulta que esquecesse o caso
+-- especial pagaria XP de treino.
+--
+-- Um booleano se responde de fora: `and not is_free` num where. Foi assim que
+-- xp_total, ranking e os dois sorteios de tema ficaram corretos sem depender de
+-- ninguém lembrar do valor mágico.
+-- ==========================================================================
+alter table matches add column if not exists is_free boolean not null default false;
+create index if not exists matches_free on matches (user_id) where is_free;
+
+-- ==========================================================================
+-- Pausa — só no treino livre.
+--
+-- Duas colunas, e não uma tabela de eventos: o que o jogo precisa saber é
+-- "está pausado agora?" e "quanto tempo já ficou parado". Um histórico de
+-- pausas seria dado que ninguém lê.
+--
+--   paused_at       null = correndo. Não-null = congelado desde este instante.
+--   paused_seconds  soma das pausas JÁ encerradas.
+--
+-- Retomar empurra o deadline pelo tempo parado, então o prazo continua sendo
+-- um instante absoluto e o cronômetro do cliente segue cosmético. Sem isso a
+-- pausa viraria um contador que o cliente mantém — e contador no cliente é
+-- exatamente o que este projeto não faz com tempo.
+-- ==========================================================================
+alter table matches add column if not exists paused_at timestamptz;
+alter table matches add column if not exists paused_seconds integer not null default 0;
+
+-- ==========================================================================
 -- Sorteio sem repetição (PRD 4.6)
 --
 -- Não existe tabela "temas jogados": a informação já está em matches, e uma
@@ -142,6 +197,10 @@ begin
         where m.user_id = p_user_id
           and m.theme_id = t.id
           and m.status <> 'cancelled'   -- partida expirada QUEIMA o tema (PRD 4.6)
+          -- Treino livre NÃO queima. Ele deixa escolher o tema, então sem esta
+          -- linha bastaria abrir um treino de cada tema para esvaziar o pool
+          -- da roleta de graça — o oposto do que o modo serve para fazer.
+          and not m.is_free
       )
     order by random()
     limit 1;
@@ -190,7 +249,10 @@ create policy profiles_self on profiles
 
 drop policy if exists themes_read on themes;
 create policy themes_read on themes
-  for select using (true);
+  -- O catálogo é público; o tema que alguém escreveu no treino livre é só dele.
+  -- Com `using (true)` a lista de temas de todo mundo vazaria para todo mundo —
+  -- e tema de treino é escrita pessoal, não conteúdo editorial.
+  for select using (created_by is null or created_by = auth.uid());
 
 drop policy if exists matches_self on matches;
 create policy matches_self on matches
@@ -390,7 +452,17 @@ begin
     raise exception 'partida não está em andamento (status: %)', m.status;
   end if;
 
-  v_elapsed := floor(extract(epoch from (v_now - m.started_at)))::integer;
+  -- Desconta as pausas: as encerradas (paused_seconds) e a que estiver aberta
+  -- no momento do envio — dá para enviar sem retomar, e cobrar esse tempo
+  -- seria cobrar por um relógio que o jogador viu parado.
+  --
+  -- greatest(0, ...) porque elapsed alimenta duration e estatística; um valor
+  -- negativo por dado corrompido viraria "0 min gastos" em vez de erro.
+  v_elapsed := greatest(0,
+      floor(extract(epoch from (v_now - m.started_at)))::integer
+    - m.paused_seconds
+    - coalesce(floor(extract(epoch from (v_now - m.paused_at)))::integer, 0)
+  );
 
   -- A carência existe porque latência de rede não é trapaça: quem apertou
   -- enviar aos 89:58 não pode perder a partida por causa de RTT.
@@ -400,7 +472,13 @@ begin
   update matches
      set submitted_at    = v_now,
          elapsed_seconds = v_elapsed,
-         status          = v_status
+         status          = v_status,
+         -- Fecha a pausa que estivesse aberta. Sem isto a linha ficaria dizendo
+         -- "pausada" numa partida já entregue, e qualquer leitura futura de
+         -- paused_at teria de saber que o status manda mais.
+         paused_seconds  = paused_seconds
+           + coalesce(floor(extract(epoch from (v_now - paused_at)))::integer, 0),
+         paused_at       = null
    where id = p_match_id;
 
   insert into submissions (match_id, image_paths, transcript, source)
@@ -416,6 +494,124 @@ begin
         source      = excluded.source;
 
   return query select v_status, v_elapsed, v_late;
+end;
+$$;
+
+-- ==========================================================================
+-- Pausar e retomar — pausar_partida() / retomar_partida()
+--
+-- Só no treino livre, e a recusa é aqui e não na tela. Valendo XP, pausar é
+-- trapaça direta: o bônus de velocidade lê o relógio, então parar o relógio é
+-- inflar o XP. Esconder o botão não impediria o POST.
+--
+-- TETO DE PAUSA. Uma partida pausada não expira — e sem teto ela ocuparia o
+-- índice one_active_match para sempre, deixando o jogador que esqueceu um
+-- treino pausado sem conseguir começar nada. Isso é o mesmo travamento de game
+-- loop que já custou três rodadas de depuração neste projeto, com outra causa.
+--
+-- Depois de PAUSA_MAXIMA a partida volta a ser expirável. O valor está em
+-- lib/matchStatus.ts como PAUSE_TIMEOUT_MS: as duas cópias PRECISAM concordar,
+-- como já concordam GRADING_TIMEOUT_MS e os 15 minutos daqui.
+-- ==========================================================================
+create or replace function pausar_partida(p_match_id uuid)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  m     record;
+  v_now timestamptz := now();
+begin
+  if auth.uid() is null then
+    raise exception 'não autenticado';
+  end if;
+
+  select * into m from matches
+   where id = p_match_id and user_id = auth.uid()
+   for update;
+
+  if not found then
+    raise exception 'partida não encontrada';
+  end if;
+  if not m.is_free then
+    raise exception 'só o treino livre pode ser pausado';
+  end if;
+  if m.status <> 'in_progress' then
+    raise exception 'partida não está em andamento (status: %)', m.status;
+  end if;
+  if m.paused_at is not null then
+    return m.paused_at;   -- idempotente: clicar duas vezes não reinicia a pausa
+  end if;
+  -- Pausar depois do prazo não devolveria tempo nenhum, só congelaria uma
+  -- partida já vencida em cima do índice de partida ativa.
+  if v_now > m.deadline then
+    raise exception 'o tempo desta partida já acabou';
+  end if;
+
+  update matches set paused_at = v_now where id = p_match_id;
+  return v_now;
+end;
+$$;
+
+create or replace function retomar_partida(p_match_id uuid)
+returns timestamptz
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  m          record;
+  v_now      timestamptz := now();
+  v_delta    integer;
+  v_deadline timestamptz;
+begin
+  if auth.uid() is null then
+    raise exception 'não autenticado';
+  end if;
+
+  select * into m from matches
+   where id = p_match_id and user_id = auth.uid()
+   for update;
+
+  if not found then
+    raise exception 'partida não encontrada';
+  end if;
+  if m.status <> 'in_progress' then
+    raise exception 'partida não está em andamento (status: %)', m.status;
+  end if;
+  if m.paused_at is null then
+    return m.deadline;    -- idempotente, igual ao pausar
+  end if;
+
+  v_delta := floor(extract(epoch from (v_now - m.paused_at)))::integer;
+
+  -- Passou do teto: materializa a expiração AQUI, em vez de deixar a tela
+  -- dizendo "expirada" enquanto o botão de retomar ainda funciona.
+  --
+  -- E devolve normalmente, SEM raise. Uma exceção depois de um update desfaz o
+  -- próprio update — a transação inteira volta atrás, a expiração não é
+  -- gravada, e o botão continuaria funcionando na próxima tentativa. A tela
+  -- mostra o bloco de partida expirada na revalidação, que é o aviso.
+  if v_delta > 24 * 60 * 60 then
+    update matches
+       set status = 'expired',
+           paused_at = null,
+           paused_seconds = paused_seconds + v_delta
+     where id = p_match_id;
+    return m.deadline;
+  end if;
+
+  update matches
+     set paused_at      = null,
+         paused_seconds = paused_seconds + v_delta,
+         -- O deadline anda junto com a pausa: é o que mantém o prazo como
+         -- instante absoluto, sem o cliente precisar somar nada.
+         deadline       = deadline + make_interval(secs => v_delta)
+   where id = p_match_id
+   returning deadline into v_deadline;
+
+  return v_deadline;
 end;
 $$;
 
@@ -567,14 +763,15 @@ declare
   v_deadline timestamptz;
   v_cost     integer;
   v_content  text;
+  v_is_free  boolean;
 begin
   if v_user_id is null then
     raise exception 'não autenticado';
   end if;
 
   -- A dica pertence ao tema da partida em andamento deste usuário?
-  select m.id, m.status, m.deadline, h.cost_xp, h.content
-    into v_match_id, v_status, v_deadline, v_cost, v_content
+  select m.id, m.status, m.deadline, h.cost_xp, h.content, m.is_free
+    into v_match_id, v_status, v_deadline, v_cost, v_content, v_is_free
     from hints h
     join matches m on m.theme_id = h.theme_id
    where h.id = p_hint_id
@@ -589,6 +786,17 @@ begin
   -- Depois do prazo não se abre dica: seria pagar penalidade sem poder usar.
   if now() > v_deadline then
     raise exception 'o tempo desta partida já acabou';
+  end if;
+
+  -- Treino livre não tem dicas. Não é limitação de escopo: lá o jogador ESCOLHE
+  -- o tema, e a penalidade em XP não existe. Liberar seria abrir um caminho
+  -- para ler o repertório e a tese de qualquer tema de graça, com calma, antes
+  -- de encarar o mesmo tema valendo — o que esvazia a dica como decisão.
+  --
+  -- A recusa mora aqui, não na tela: a tela esconde o botão, e esconder botão
+  -- não impede o POST.
+  if v_is_free then
+    raise exception 'o treino livre não tem dicas';
   end if;
 
   insert into match_hints (match_id, hint_id, cost_xp)

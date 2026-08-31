@@ -272,7 +272,9 @@ console.log("grading: autoteste OK");
 // Status efetivo derivado na leitura
 // ==========================================================================
 
-const { effectiveStatus, GRADING_TIMEOUT_MS } = await import("./matchStatus.ts");
+const { effectiveStatus, GRADING_TIMEOUT_MS, PAUSE_TIMEOUT_MS } = await import(
+  "./matchStatus.ts"
+);
 
 const T0 = Date.parse("2026-08-25T12:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -317,6 +319,63 @@ for (const s of ["graded", "expired", "cancelled", "needs_reupload", "grading_fa
   );
 }
 
+// ---- pausa do treino livre -------------------------------------------------
+//
+// O caso que motiva tudo: pausada, com o prazo ORIGINAL já vencido. O deadline
+// está congelado, mas now() não para — sem tratar a pausa, esta partida
+// apareceria expirada para quem só saiu para almoçar.
+assert.equal(
+  effectiveStatus(
+    {
+      status: "in_progress",
+      deadline: iso(T0 - 60_000),
+      submitted_at: null,
+      paused_at: iso(T0 - 30 * 60_000),
+    },
+    T0
+  ),
+  "in_progress"
+);
+
+// No limite do teto ainda vale. Um milissegundo além, não: a partida precisa
+// liberar o índice one_active_match em algum momento.
+assert.equal(
+  effectiveStatus(
+    { status: "in_progress", deadline: iso(T0 - 1), submitted_at: null,
+      paused_at: iso(T0 - PAUSE_TIMEOUT_MS) },
+    T0
+  ),
+  "in_progress"
+);
+assert.equal(
+  effectiveStatus(
+    { status: "in_progress", deadline: iso(T0 - 1), submitted_at: null,
+      paused_at: iso(T0 - PAUSE_TIMEOUT_MS - 1) },
+    T0
+  ),
+  "expired"
+);
+
+// Pausada com prazo de sobra continua correndo, obviamente.
+assert.equal(
+  effectiveStatus(
+    { status: "in_progress", deadline: iso(T0 + 600_000), submitted_at: null,
+      paused_at: iso(T0 - 60_000) },
+    T0
+  ),
+  "in_progress"
+);
+
+// paused_at null se comporta exatamente como o campo ausente — é o que garante
+// que as partidas valendo XP não mudaram de comportamento.
+assert.equal(
+  effectiveStatus(
+    { status: "in_progress", deadline: iso(T0 - 1), submitted_at: null, paused_at: null },
+    T0
+  ),
+  effectiveStatus({ status: "in_progress", deadline: iso(T0 - 1), submitted_at: null }, T0)
+);
+
 console.log("matchStatus: autoteste OK");
 
 // ==========================================================================
@@ -355,6 +414,7 @@ function partida(over: Partial<P> = {}): P {
     status: "graded",
     expirada: false,
     isReplay: false,
+    livre: false,
     origem: "handwritten",
     notaBruta: 600,
     xpFinal: 700,

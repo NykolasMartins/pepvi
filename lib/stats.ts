@@ -18,6 +18,12 @@ export type PartidaConcluida = {
   status: string;
   expirada: boolean;
   isReplay: boolean;
+  /**
+   * Treino livre. Entra nas médias — é redação corrigida com a mesma rubrica,
+   * e escondê-la faria a evolução do aluno sumir do gráfico. Não entra em XP,
+   * que já vem zero, nem no ranking, que é filtrado no Postgres.
+   */
+  livre: boolean;
   origem: string | null; // 'handwritten' | 'typed'
   notaBruta: number;
   xpFinal: number;

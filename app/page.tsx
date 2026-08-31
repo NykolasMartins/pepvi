@@ -1,5 +1,5 @@
-import { listDifficulties } from "./actions";
-import SeletorDificuldade from "./SeletorDificuldade";
+import { listDifficulties, listThemes } from "./actions";
+import ModoDeJogo from "./ModoDeJogo";
 import { signOut } from "./auth-actions";
 import { supabaseUser, requireUser } from "@/lib/supabase";
 import { nivelDe } from "@/lib/levels";
@@ -12,12 +12,17 @@ export default async function Lobby() {
 
   // Sem filtro por user_id: a RLS já restringe a auth.uid(). Se algum dia esses
   // números vierem errados, é sinal de política frouxa — não de filtro esquecido.
-  const [{ count: totalTemas }, { count: jogadas }, { data: profile }, { data: pontuadas }] =
+  const [{ count: totalTemas }, { count: jogadas }, { count: queimados }, { data: profile }, { data: pontuadas }] =
     await Promise.all([
       supabase.from("themes").select("*", { count: "exact", head: true }).eq("active", true),
       supabase.from("matches").select("*", { count: "exact", head: true }).neq("status", "cancelled"),
+      // Só o que a roleta consumiu: treino livre não queima tema, então contá-lo
+      // aqui faria "temas inéditos" cair sem que nenhum saísse do sorteio.
+      supabase.from("matches").select("theme_id", { count: "exact", head: true }).neq("status", "cancelled").eq("is_free", false),
       supabase.from("profiles").select("username").maybeSingle(),
-      supabase.from("matches").select("xp_final").not("xp_final", "is", null),
+      // Mesmo recorte de xp_total() no Postgres. Treino livre grava zero, então
+      // o filtro não muda a soma hoje — ele evita que as duas contas divirjam.
+      supabase.from("matches").select("xp_final").not("xp_final", "is", null).eq("is_free", false),
     ]);
 
   // XP somado das partidas, não de um contador em profiles: contador
@@ -25,9 +30,9 @@ export default async function Lobby() {
   // reprocessamento de correção.
   const xpTotal = (pontuadas ?? []).reduce((s, m) => s + (m.xp_final ?? 0), 0);
   const nivel = nivelDe(xpTotal);
-  const dificuldades = await listDifficulties();
+  const [dificuldades, temas] = await Promise.all([listDifficulties(), listThemes()]);
 
-  const ineditos = Math.max(0, (totalTemas ?? 0) - (jogadas ?? 0));
+  const ineditos = Math.max(0, (totalTemas ?? 0) - (queimados ?? 0));
   const primeiraVez = (jogadas ?? 0) === 0;
 
   return (
@@ -123,12 +128,12 @@ export default async function Lobby() {
         </div>
       )}
 
-      <SeletorDificuldade dificuldades={dificuldades} xpTotal={xpTotal} />
+      <ModoDeJogo dificuldades={dificuldades} xpTotal={xpTotal} temas={temas} />
 
       <p className="text-center text-xs leading-relaxed text-zinc-600">
-        O cronômetro começa no sorteio e não pausa. Abandonar{" "}
-        <strong className="text-zinc-500">queima o tema</strong> — ele não volta
-        para a roleta.
+        Valendo XP, o cronômetro começa no sorteio e não pausa: abandonar{" "}
+        <strong className="text-zinc-500">queima o tema</strong>, ele não volta
+        para a roleta. No treino livre nada disso conta.
       </p>
     </main>
   );

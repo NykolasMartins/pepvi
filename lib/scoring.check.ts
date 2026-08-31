@@ -181,3 +181,36 @@ assert.equal(
 );
 
 console.log("dificuldade: autoteste OK");
+
+// ==========================================================================
+// Treino livre — não paga XP, em nenhuma combinação
+// ==========================================================================
+
+// O caso que importa: partida perfeita, rápida, na dificuldade mais alta.
+// Se o zero saísse de uma condição errada, é aqui que apareceria.
+assert.deepEqual(
+  computeXp({
+    rawScore: 1000,
+    hintPenalty: 0,
+    elapsedSeconds: 600,
+    durationSeconds: 3600,
+    expired: false,
+    difficultyMultiplier: 1.6,
+    isFree: true,
+  }),
+  { penalty: 0, speedBonus: 0, xpFinal: 0, scoringVersion: SCORING.version }
+);
+
+// Sem o isFree, a MESMA partida paga — senão o teste acima passaria por acaso.
+assert.ok(
+  computeXp({
+    rawScore: 1000,
+    hintPenalty: 0,
+    elapsedSeconds: 600,
+    durationSeconds: 3600,
+    expired: false,
+    difficultyMultiplier: 1.6,
+  }).xpFinal > 0
+);
+
+console.log("treino livre: autoteste OK");

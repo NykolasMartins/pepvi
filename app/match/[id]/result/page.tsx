@@ -64,7 +64,7 @@ export default async function ResultPage({
     await supabase
       .from("matches")
       .select(
-      "id, status, elapsed_seconds, duration_seconds, raw_score, hint_penalty, speed_bonus, xp_final, scoring_version, is_replay, flagged, themes(title)"
+      "id, status, elapsed_seconds, duration_seconds, raw_score, hint_penalty, speed_bonus, xp_final, scoring_version, is_replay, is_free, flagged, themes(title)"
     )
       .eq("id", id)
       .maybeSingle()
@@ -94,6 +94,7 @@ export default async function ResultPage({
 
   const theme = match.themes as unknown as { title: string };
   const expired = match.status === "expired";
+  const livre = match.is_free as boolean;
 
   if (!correction) {
     return (
@@ -116,18 +117,23 @@ export default async function ResultPage({
 
   return (
     <main className="mx-auto max-w-2xl space-y-10 px-5 py-10">
+      {/* No treino livre o número grande é a NOTA. Mostrar "0 XP" em letra
+          garrafal seria anunciar um fracasso onde não houve tentativa de
+          pontuar — e a nota é o que o modo existe para entregar. */}
       <header className="text-center">
         <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
-          {expired ? "Partida expirada" : "Partida concluída"}
+          {livre ? "Treino livre" : expired ? "Partida expirada" : "Partida concluída"}
         </p>
         <div
           className={`tabular mt-3 font-display text-7xl font-extrabold ${
-            expired ? "text-zinc-600" : "text-emerald-400"
+            !livre && expired ? "text-zinc-600" : "text-emerald-400"
           }`}
         >
-          {match.xp_final ?? 0}
+          {livre ? (correction.raw_score ?? 0) : (match.xp_final ?? 0)}
         </div>
-        <p className="mt-1 text-sm text-zinc-500">XP ganho</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          {livre ? "nota de 0 a 1000" : "XP ganho"}
+        </p>
         <h1 className="mt-6 text-sm text-zinc-400">{theme.title}</h1>
       </header>
 
@@ -152,8 +158,18 @@ export default async function ResultPage({
         </section>
       )}
 
+      {livre && (
+        <p className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 text-xs leading-relaxed text-zinc-400">
+          <strong className="text-zinc-200">Treino livre.</strong> Você escolheu
+          o tema e o tempo, então esta partida não paga XP nem entra no ranking
+          — e o tema continua disponível para a roleta. A correção abaixo é a
+          mesma das partidas valendo.
+        </p>
+      )}
+
       {/* Composição do XP: é a decomposição que ensina o jogador a jogar
           melhor. Um número único não ensina nada. */}
+      {!livre && (
       <section className="space-y-1 rounded-lg bg-zinc-900 p-5 text-sm">
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-zinc-500">
           Como esse XP foi formado
@@ -180,6 +196,7 @@ export default async function ResultPage({
           <span>{match.xp_final ?? 0}</span>
         </div>
       </section>
+      )}
 
       <section className="space-y-6">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">

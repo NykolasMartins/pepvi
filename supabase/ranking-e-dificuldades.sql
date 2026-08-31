@@ -90,7 +90,11 @@ set search_path = public
 as $$
   select coalesce(sum(xp_final), 0)::integer
     from matches
-   where user_id = p_user_id and status = 'graded';
+   where user_id = p_user_id and status = 'graded'
+     -- Treino livre grava xp_final = 0, então somá-lo não mudaria a conta hoje.
+     -- A exclusão é explícita mesmo assim: é a linha que impede um bug de
+     -- pontuação futuro de virar XP de graça e desbloqueio de dificuldade.
+     and not is_free;
 $$;
 
 -- ==========================================================================
@@ -142,6 +146,10 @@ as $$
       from matches m
      where m.status = 'graded'
        and m.xp_final is not null
+       -- Fora do placar. Não só pelo XP (que é zero): `partidas` é o critério
+       -- de desempate, e treino livre é ilimitado — quem treinasse muito
+       -- subiria de posição sem escrever nada que valha.
+       and not m.is_free
        and (
          p_periodo = 'historico'
          or (p_periodo = 'semana' and m.submitted_at >= date_trunc('week', now()))

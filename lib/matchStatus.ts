@@ -29,10 +29,36 @@ export type MatchStatus =
 /** Passou disto em grading, tratamos como falha (PRD 6.5). */
 export const GRADING_TIMEOUT_MS = 15 * 60 * 1000;
 
+/**
+ * Teto da pausa do treino livre.
+ *
+ * Pausada, a partida não expira — o prazo dela está congelado. O teto existe
+ * porque ela continua ocupando o índice one_active_match: sem ele, um treino
+ * pausado e esquecido impediria qualquer partida nova, para sempre.
+ *
+ * Espelha o `interval '24 hours'` de retomar_partida() e da materialização em
+ * iniciar_partida(). Mudou um, mude os três.
+ */
+export const PAUSE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export function effectiveStatus(
-  m: { status: MatchStatus; deadline: string; submitted_at: string | null },
+  m: {
+    status: MatchStatus;
+    deadline: string;
+    submitted_at: string | null;
+    /** null (ou ausente) = correndo. Só o treino livre pausa. */
+    paused_at?: string | null;
+  },
   now: number = Date.now()
 ): MatchStatus {
+  if (m.status === "in_progress" && m.paused_at) {
+    // Congelada: o deadline não anda, então compará-lo com now() diria
+    // "expirada" só porque o mundo continuou. O que vence é a própria pausa.
+    return new Date(m.paused_at).getTime() + PAUSE_TIMEOUT_MS < now
+      ? "expired"
+      : "in_progress";
+  }
+
   if (m.status === "in_progress" && new Date(m.deadline).getTime() < now) {
     return "expired";
   }
