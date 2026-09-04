@@ -90,6 +90,34 @@ export async function requireUser() {
 }
 
 /**
+ * Usuário da sessão, e ele precisa ser admin. Lança se não for.
+ *
+ * Lê profiles.is_admin com a SESSÃO do usuário, não com service_role: a RLS já
+ * restringe a linha à própria pessoa, e usar a chave administrativa aqui só
+ * ampliaria o estrago de um bug sem melhorar nada.
+ *
+ * Quem escreve a coluna é o SQL Editor, uma vez. `revoke update (is_admin)` em
+ * supabase/admin.sql é o que impede o usuário de se promover — sem aquele
+ * revoke, esta função seria decorativa, porque a policy profiles_self permite
+ * ao usuário escrever no próprio profile.
+ *
+ * Quem chama trata a exceção como 404, não 403: um 403 confirmaria que a rota
+ * de administração existe.
+ */
+export async function requireOwner() {
+  const user = await requireUser();
+  const supabase = await supabaseUser();
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("is_admin, username")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.is_admin) throw new Error("não autorizado");
+  return { ...user, username: data.username as string };
+}
+
+/**
  * Separa "não achou" de "quebrou".
  *
  * Sem isto, `const { data } = await query; if (!data) notFound()` transforma

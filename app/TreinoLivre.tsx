@@ -38,7 +38,13 @@ function Botao() {
  * combobox próprio custaria busca, teclado e acessibilidade para resolver o que
  * o navegador já resolve, inclusive no celular.
  */
-export default function TreinoLivre({ temas }: { temas: TemaDaLista[] }) {
+export default function TreinoLivre({
+  temas,
+  semCota = false,
+}: {
+  temas: TemaDaLista[];
+  semCota?: boolean;
+}) {
   const [origem, setOrigem] = useState<"escrever" | "catalogo">("escrever");
   const [tema, setTema] = useState("");
   const [temaId, setTemaId] = useState("");   // "" = aleatório
@@ -186,7 +192,7 @@ export default function TreinoLivre({ temas }: { temas: TemaDaLista[] }) {
           minutos
         )}
       >
-        <fieldset disabled={!temaOk || !tempoOk} className="disabled:opacity-50">
+        <fieldset disabled={!temaOk || !tempoOk || semCota} className="disabled:opacity-50">
           <Botao />
         </fieldset>
       </form>

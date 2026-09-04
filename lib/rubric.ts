@@ -8,7 +8,11 @@
  *
  * Ao mudar qualquer texto aqui, suba a versão.
  */
-export const RUBRIC_VERSION = "enem-v3";
+export const RUBRIC_VERSION = "enem-v4";
+// v4 (2026-09-03): ANCHORS deixou de ser vazio. Tres redacoes reais
+// corrigidas por humano (880, 640 e 360) passaram a acompanhar todo prompt
+// de avaliacao. Sem exemplo calibrado o modelo regredia a media e distribuia
+// 600-700 para tudo; a regua mudou, entao notas v3 e v4 nao se comparam.
 // v3 (2026-08-26): C2 ganhou trava de origem do repertório, e o avaliador
 // passou a RECEBER os textos motivadores e as dicas abertas — antes ele não
 // tinha como classificar a origem de material que nunca via.
@@ -131,15 +135,71 @@ A proposta deve respeitar os direitos humanos; se violar, marque violatesHumanRi
 NÃO atribua a nota da C5. Reporte apenas os sinais — o código calcula a nota e aplica o teto. Texto sem agente nomeado ou sem ação detalhada não chega a 200, mesmo com os cinco elementos formalmente presentes.`;
 
 /**
- * ponytail: âncoras vazias. Modelo sem exemplo calibrado regride à média e
- * distribui 600–700 para tudo.
+ * Redações-âncora: o que cada nota REALMENTE parece.
  *
- * Não inventei redações-âncora: âncora errada calibra errado, o que é pior que
- * âncora nenhuma. Preencher com 3 redações REAIS já corrigidas por humano (uma
- * ~950, uma ~640, uma ~380) assim que houver. É a intervenção de maior retorno
- * sobre a qualidade da correção — mais que trocar de modelo.
+ * Sem elas o modelo regredia à média e distribuía 600–700 para tudo. As três
+ * cobrem a escala (880, 640, 360) e foram escolhidas para ensinar as fronteiras
+ * onde o avaliador mais erra: repertório com fonte nomeada contra conceito
+ * solto na C2, e os cinco elementos presentes sem detalhamento real na C5.
+ *
+ * ORIGEM: corpus Extended Essay-BR (github.com/lplnufpi/essay-br, licença MIT),
+ * corrigido por professores pela régua do ENEM. NÃO são notas do INEP — a banca
+ * oficial pode ser mais dura, sobretudo na C2. Ao conseguir redações com nota
+ * oficial, substitua estas e suba a versão.
+ *
+ * Cada uma foi conferida contra a rubrica antes de entrar: o corpus tem casos
+ * com C5 200 sem nenhuma proposta de intervenção, e uma âncora dessas ensinaria
+ * o modelo a repetir o erro. Âncora errada calibra errado — pior que nenhuma.
+ *
+ * O `theme` não é decoração: sem saber qual era a proposta, não há como julgar
+ * a pertinência do repertório, que é metade da C2.
  */
-export const ANCHORS: { transcript: string; scores: number[]; why: string }[] = [];
+export const ANCHORS: {
+  theme: string;
+  transcript: string;
+  scores: number[];
+  why: string;
+}[] = [
+  {
+    theme: "Privatização do saneamento básico",
+    scores: [160, 200, 160, 200, 160],
+    why:
+      "C2 200: dado institucional datado (SNIS 2017, 48% sem coleta de esgoto), ONU e Schopenhauer sustentam o argumento em vez de decorarem. C5 160 e não 200: os cinco elementos estão lá (Ministério da Saúde, expandir serviços, com auxílio das prefeituras, relatório e redirecionamento de verbas, popularizar o acesso), mas o detalhamento é administrativo e não diz como a expansão chega à zona rural. C1 160: desvios pontuais de acentuação e vírgula que não comprometem a leitura. Ter os cinco elementos da C5 não garante 200.",
+    transcript: `A Constituição Federal de 1988 assegura a todos os indivíduos o acesso ao saneamento básico. No entanto, na prática, tal garantia é deturpada, visto que esse direito, indispensável para a saúde da população, é precário em zonas rurais e periféricas. Assim, uma possível privatização do saneamento básico restringirá ainda mais a saúde no Brasil. Isso ocorre devido a má distribuição de renda e a negligência governamental.
+
+Em primeira análise, a desigualdade de renda corrobora para a elitizacão do acesso ao saneamento. Segundo a ONU , o Brasil está em segundo lugar em concentração de renda nas mãos de poucos . Visto isso, fica claro que privatizar tal serviço agravará a desigualdade social e o tornará ainda mais restrito, uma vez que, nas mãos de empresas privadas, os impostos crescerão cada vez mais e a população carente não terá condições de arcar com as despesas.
+
+Além disso, é irrefutável o descaso governamental na resolução do problema. De acordo com o SNIS 2017 (Sistema Nacional de Informações sobre Saneamento), o Brasil tem 48% da população sem coleta de esgoto, esse dado mostra como a gestão brasileira é ineficaz na democratização de serviços essenciais. Mas privatizar não solucionará o problema do povo, apenas beneficiará a geração de lucro, e sacrificar a saúde a qualquer outra vantagem é o maior erro do homem , assim como afirmava Arthur Schopenhauer.
+
+Entende-se, portanto, a necessidade em democratizar o saneamento básico. Para tanto, o Estado , através do Ministério da Saúde, deve expandir o alcance dos serviços de esgoto, de água, de coleta de lixo e limpeza pública para zonas rurais e periféricas com o auxílio da prefeitura de cada região, onde os prefeitos devem fornecer um relatório sobre a atual situação para que possa ser analisada e redirecionar as verbas governamentais para a resolução do problema a fim de popularizar o acesso ao saneamento básico. Assim, a população verá o direito constitucional como uma realidade próxima.`,
+  },
+  {
+    theme: "Escola no Brasil: com partido ou sem partido?",
+    scores: [120, 160, 120, 120, 120],
+    why:
+      "C2 160 e não 200: a análise é conceitual e coerente (classes antagônicas, alienação, função social do professor), mas nenhum autor, obra ou dado é nomeado — conceito sem fonte legitimada não passa de 160. C3 120: os parágrafos repetem a mesma tese em vez de encadear causa e consequência. C5 120: 'devemos exigir a discussão' é desejo, não proposta — sem agente, sem meio, sem detalhamento. Texto bem escrito e organizado que ainda assim fica na média por falta de repertório e de intervenção.",
+    transcript: `Diante da emersão do projeto de Lei “Escola sem Partido”, necessita-se analisar os pressupostos dessa proposta conservadora, porque busca intimidar o professor ao coibi-lo de expor suas ideologias no ambiente de ensino. O educador é um ser social crítico, proibi-lo de exercer sua função social é um atraso histórico.
+
+A sociedade é marcada por divisões de classes antagônicas que se relacionam por diferentes meios. Nesse contexto, o profissional da educação é vítima de um sistema social alienador que impõe medo e individualiza os seres humanos. O professor na escola discute e aborda suas ideias sejam elas críticas ou conservadoras, o aluno democraticamente escolhe qual segui-la . Nessa perspectiva o professor não doutrina, e sim esclarece dúvidas.
+
+Acusá-lo de doutrinação é oprimi-lo de construir uma sociedade democrática que luta por direitos e reconhece seus deveres. A educação tem a função social de construir indivíduos conscientes, justos, críticos que não se intimidam pelas desigualdades. No entanto, o ato de educador não esta livre de alienação e alienadores.
+
+Em tese, aprovar a “Escola sem Partido” que prevê a punição aos professores que façam “doutrinação ideológica” na escola é um retrocesso. Pois, em vez de proibir, devemos exigir a discussão, a análise e o exame dos pressupostos que norteiam o discurso de pais, professores e alunos.`,
+  },
+  {
+    theme: "Caminhos para combater a intolerância religiosa no Brasil",
+    scores: [80, 80, 80, 40, 80],
+    why:
+      "C1 80: desvios graves e recorrentes de concordância ('agressões permanece', 'criminosos que não respeita') e grafia ('constiuição'). C4 40: rupturas de coesão e trechos truncados — as interrogações soltas marcam onde a frase se perde. C2 80: Kant aparece citado e abandonado, sem sustentar o argumento. C5 80: 'investimento em educação', 'parceria público e privada' e 'leis mais punitivas' são intenções genéricas, sem agente nomeado nem meio de execução.",
+    transcript: `É notável que atos de violência contra as crenças religiosas da população brasileira aumenta-se  gradativamente. Atitudes de intolerância são vistas desde a reforma protestante  onde  milhares de indivíduos foram perseguidos e mortos pelos seus representantes políticos por não seguirem a religião designada.
+
+Essas agressões, seja verbal ou corporal permanece  na sociedade, realizadas por criminosos que não respeita  os dogmas escolhidos pelas pessoas que tem  a sua liberdade assegurada pela constiuição .
+
+Em consequência disso, guerras são instituídas, como exemplo a  estado islâmico ? matam   . No Brasil ? o preconceito de crenças emprego por parte de alguns , aumenta a discriminação sofrida por sua população religiosa.
+
+Diante do exposto, como disse o filosofo Immanuel Kant ? "o ser humano é aquilo que a educação faz dele"  o investimento em educação é fundamental para que tenhamos um maior respeito sobre o assunto. Também em parceria público e privada, a criação e a divulgação de campanhas para extinguir o problema, além de leis mais punitivas aos que descumprirem, podendo assim acabar com essa intolerância.`,
+  },
+];
 
 export function anchorBlock(): string {
   if (ANCHORS.length === 0) return "";
@@ -147,8 +207,9 @@ export function anchorBlock(): string {
     "\n\nEXEMPLOS CALIBRADOS (mesma régua que você deve aplicar):\n" +
     ANCHORS.map(
       (a, i) =>
-        `--- Exemplo ${i + 1} — notas ${a.scores.join("/")} (total ${a.scores.reduce((x, y) => x + y, 0)})\n` +
-        `Motivo: ${a.why}\nRedação:\n${a.transcript}`
+        `--- Exemplo ${i + 1} — C1 ${a.scores[0]} / C2 ${a.scores[1]} / C3 ${a.scores[2]} / C4 ${a.scores[3]} / C5 ${a.scores[4]} (total ${a.scores.reduce((x, y) => x + y, 0)})\n` +
+        `Tema da proposta: ${a.theme}\n` +
+        `Por que estas notas: ${a.why}\nRedação:\n${a.transcript}`
     ).join("\n\n")
   );
 }

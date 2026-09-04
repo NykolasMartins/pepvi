@@ -26,9 +26,11 @@ function Botao({ label }: { label: string }) {
 export default function SeletorDificuldade({
   dificuldades,
   xpTotal,
+  semCota = false,
 }: {
   dificuldades: Dificuldade[];
   xpTotal: number;
+  semCota?: boolean;
 }) {
   const liberadas = dificuldades.filter((d) => d.desbloqueada);
   const [escolhida, setEscolhida] = useState(
@@ -82,6 +84,7 @@ export default function SeletorDificuldade({
       </div>
 
       <form action={startMatch.bind(null, escolhida)}>
+        <fieldset disabled={semCota} className="disabled:opacity-50">
         <Botao
           label={
             atual && atual.id !== "padrao"
@@ -89,6 +92,7 @@ export default function SeletorDificuldade({
               : "GIRAR ROLETA DE TEMAS"
           }
         />
+        </fieldset>
       </form>
     </div>
   );

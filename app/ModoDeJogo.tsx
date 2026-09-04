@@ -16,10 +16,17 @@ export default function ModoDeJogo({
   dificuldades,
   xpTotal,
   temas,
+  semCota = false,
 }: {
   dificuldades: Dificuldade[];
   xpTotal: number;
   temas: TemaDaLista[];
+  /**
+   * Cota de correções esgotada. Desabilitar o botão é cortesia — quem barra de
+   * verdade é iniciar_partida(), no Postgres. Sem isto, clicar mesmo assim
+   * trocaria um aviso claro por uma tela de erro do Next.
+   */
+  semCota?: boolean;
 }) {
   const [modo, setModo] = useState<"valendo" | "livre">("valendo");
 
@@ -50,9 +57,13 @@ export default function ModoDeJogo({
       </div>
 
       {modo === "valendo" ? (
-        <SeletorDificuldade dificuldades={dificuldades} xpTotal={xpTotal} />
+        <SeletorDificuldade
+          dificuldades={dificuldades}
+          xpTotal={xpTotal}
+          semCota={semCota}
+        />
       ) : (
-        <TreinoLivre temas={temas} />
+        <TreinoLivre temas={temas} semCota={semCota} />
       )}
     </div>
   );

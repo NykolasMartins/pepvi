@@ -1,4 +1,5 @@
-import { listDifficulties, listThemes } from "./actions";
+import Link from "next/link";
+import { listDifficulties, listThemes, remainingEssays } from "./actions";
 import ModoDeJogo from "./ModoDeJogo";
 import { signOut } from "./auth-actions";
 import { supabaseUser, requireUser } from "@/lib/supabase";
@@ -19,7 +20,7 @@ export default async function Lobby() {
       // Só o que a roleta consumiu: treino livre não queima tema, então contá-lo
       // aqui faria "temas inéditos" cair sem que nenhum saísse do sorteio.
       supabase.from("matches").select("theme_id", { count: "exact", head: true }).neq("status", "cancelled").eq("is_free", false),
-      supabase.from("profiles").select("username").maybeSingle(),
+      supabase.from("profiles").select("username, is_admin").maybeSingle(),
       // Mesmo recorte de xp_total() no Postgres. Treino livre grava zero, então
       // o filtro não muda a soma hoje — ele evita que as duas contas divirjam.
       supabase.from("matches").select("xp_final").not("xp_final", "is", null).eq("is_free", false),
@@ -30,7 +31,11 @@ export default async function Lobby() {
   // reprocessamento de correção.
   const xpTotal = (pontuadas ?? []).reduce((s, m) => s + (m.xp_final ?? 0), 0);
   const nivel = nivelDe(xpTotal);
-  const [dificuldades, temas] = await Promise.all([listDifficulties(), listThemes()]);
+  const [dificuldades, temas, cota] = await Promise.all([
+    listDifficulties(),
+    listThemes(),
+    remainingEssays(),
+  ]);
 
   const ineditos = Math.max(0, (totalTemas ?? 0) - (queimados ?? 0));
   const primeiraVez = (jogadas ?? 0) === 0;
@@ -47,14 +52,27 @@ export default async function Lobby() {
               Redação do ENEM contra o relógio.
             </p>
           </div>
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="whitespace-nowrap text-xs text-zinc-600 underline hover:text-zinc-400"
-            >
-              sair
-            </button>
-          </form>
+          <div className="flex shrink-0 items-center gap-3">
+            {/* Só no lobby, nunca no Nav: pôr no Nav obrigaria o RootLayout a
+                consultar o banco em toda página do site para desenhar um link
+                que quase ninguém usa. */}
+            {profile?.is_admin && (
+              <Link
+                href="/admin"
+                className="whitespace-nowrap text-xs text-emerald-500 underline hover:text-emerald-300"
+              >
+                admin
+              </Link>
+            )}
+            <form action={signOut}>
+              <button
+                type="submit"
+                className="whitespace-nowrap text-xs text-zinc-600 underline hover:text-zinc-400"
+              >
+                sair
+              </button>
+            </form>
+          </div>
         </div>
 
         {/* Nível como identidade, não como número solto. */}
@@ -128,7 +146,41 @@ export default async function Lobby() {
         </div>
       )}
 
-      <ModoDeJogo dificuldades={dificuldades} xpTotal={xpTotal} temas={temas} />
+      {/* A cota é do PROJETO, não do jogador: a correção usa uma cota de IA
+          diária e compartilhada. Avisar antes evita o pior caso, que é
+          descobrir o teto depois de escrever a redação. */}
+      {cota.restantes <= 3 && (
+        <p
+          className={`rounded-lg border p-3 text-center text-xs leading-relaxed ${
+            cota.restantes === 0
+              ? "border-red-900/60 bg-red-950/30 text-red-300"
+              : "border-amber-900/60 bg-amber-950/20 text-amber-300"
+          }`}
+        >
+          {cota.restantes === 0 ? (
+            <>
+              <strong>Você atingiu o limite de correções por 24 horas.</strong>
+              {cota.liberaEm &&
+                ` A próxima vaga abre em ${new Date(cota.liberaEm).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.`}
+            </>
+          ) : (
+            <>
+              Resta{cota.restantes === 1 ? "" : "m"}{" "}
+              <strong>
+                {cota.restantes} correç{cota.restantes === 1 ? "ão" : "ões"}
+              </strong>{" "}
+              nas próximas 24 horas.
+            </>
+          )}
+        </p>
+      )}
+
+      <ModoDeJogo
+        dificuldades={dificuldades}
+        xpTotal={xpTotal}
+        temas={temas}
+        semCota={cota.restantes === 0}
+      />
 
       <p className="text-center text-xs leading-relaxed text-zinc-600">
         Valendo XP, o cronômetro começa no sorteio e não pausa: abandonar{" "}

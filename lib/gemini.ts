@@ -11,9 +11,29 @@ import type { C1Signals, C2Signals, C3Signals, C5Flags, Evaluation } from "./ene
  * auditar — e deixa o modelo "consertar" o texto do aluno enquanto lê, o que
  * daria 200 na Competência 1 para todo mundo.
  *
- * Modelo escolhido na Fase 0: gemini-3.6-flash na transcrição.
+ * MODELOS DIFERENTES POR ETAPA, e não por elegância: por cota.
+ *
+ * Nesta conta, os modelos Flash têm 20 requisições por DIA (5 por minuto) e os
+ * Flash Lite têm 500 (15 por minuto) — 25x mais. Com as duas etapas no Flash,
+ * o projeto inteiro fazia 10 redações manuscritas por dia. Confira o número da
+ * sua conta em aistudio.google.com/rate-limit; a documentação pública não
+ * publica mais esses limites, e o valor divulgado por terceiros (1.500/dia)
+ * não bate com o que a conta mostra.
+ *
+ * A transcrição é a etapa segura para descer de modelo: ler caligrafia e
+ * reproduzi-la é trabalho mecânico, o resultado aparece na tela e existe
+ * contestação se sair errado. Já a AVALIAÇÃO fica no Flash: trocar o modelo que
+ * dá nota muda a régua, e o gráfico de evolução do aluno passaria a comparar
+ * notas medidas por modelos diferentes — o mesmo problema que RUBRIC_VERSION
+ * existe para evitar. Se um dia trocar EVAL_MODEL, suba RUBRIC_VERSION junto.
+ *
+ * Efeito: o gargalo deixou de ser a leitura da foto e passou a ser só a
+ * avaliação — 20 redações por dia em vez de 10.
+ *
+ * Nada de alias tipo `gemini-flash-lite-latest`: ele muda de alvo quando o
+ * Google atualiza, e a régua das notas mudaria sem ninguém tocar em nada.
  */
-export const VISION_MODEL = "gemini-3.6-flash";
+export const VISION_MODEL = "gemini-3.5-flash-lite";
 export const EVAL_MODEL = "gemini-3.6-flash";
 
 /** Abaixo disso a foto vai para reenvio, sem gastar a etapa de avaliação. */

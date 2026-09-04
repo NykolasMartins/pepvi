@@ -20,11 +20,12 @@ npm run build                  # roda o TypeScript; use como verificação
 node lib/grading.check.ts      # tetos das competências, C5, status, estatísticas
 node lib/scoring.check.ts      # XP, penalidade de dicas, dificuldade
 node lib/levels.check.ts       # níveis
+node lib/custoIA.check.ts      # custo estimado de IA
 node test-vision.js --selftest # métrica de erro de transcrição
 node supabase/verificar-sorteio.mjs 400   # distribuição do sorteio (precisa de .env.local)
 ```
 
-Rode os `*.check.ts` depois de qualquer mudança em `lib/enem.ts`, `lib/scoring.ts`, `lib/levels.ts`, `lib/stats.ts` ou `lib/matchStatus.ts`.
+Rode os `*.check.ts` depois de qualquer mudança em `lib/enem.ts`, `lib/scoring.ts`, `lib/levels.ts`, `lib/stats.ts` ou `lib/matchStatus.ts` ou `lib/custoIA.ts`.
 
 ## SQL — a ordem importa
 
@@ -34,11 +35,12 @@ No SQL Editor do Supabase, **nesta ordem**:
 supabase/schema.sql
 supabase/ranking-e-dificuldades.sql
 supabase/amigos-e-duelos.sql
+supabase/admin.sql
 supabase/fix-game-loop.sql
 supabase/seed-temas.sql + seed-dicas.sql   (local; no repo público: seed-exemplo.sql)
 ```
 
-Os três últimos dependem de `difficulties` e `xp_total()`, criados no segundo.
+Os três últimos dependem de `difficulties` e `xp_total()`, criados no segundo. `admin.sql` vem **antes** de `fix-game-loop.sql`: `iniciar_partida` passou a ler a tabela `config` criada lá.
 
 **O treino livre mudou os quatro primeiros** (colunas `is_free`, `paused_at`, `paused_seconds`, `themes.created_by`; a policy `themes_read`; os dois sorteios de tema; `xp_total`, `ranking`, `abrir_dica`, `enviar_partida`, `pausar_partida`, `retomar_partida`, `iniciar_partida`). São idempotentes: rode os quatro de novo, nesta ordem. A consulta no fim de `fix-game-loop.sql` confere — `versao_nova` tem de ser 1.
 
@@ -106,6 +108,45 @@ A redundância é deliberada. O XP nasce em `computeXp`; deixar a proteção só
 O **enunciado é montado em `iniciar_partida`**, nunca recebido do cliente: ele viaja junto do tema no prompt de correção, e a instrução sobre direitos humanos que a Competência 5 cobra não pode depender do que veio no POST. Índice único parcial `themes_custom_por_usuario` dedupe por `(created_by, lower(title))` — reescrever o mesmo tema é o caso de uso, e sem ele cada treino criaria uma linha nova.
 
 `themes_read` deixou de ser `using (true)`: tema de treino é escrita pessoal, e a política antiga vazaria o de todo mundo para todo mundo.
+
+### Teto de correções mora no banco, e o cliente não sabe o número
+
+Cada redação enviada custa 1 ou 2 chamadas de IA, e a cota do Gemini é **diária e compartilhada por todos os jogadores** — na conta atual, 20 requisições/dia no modelo de avaliação. Sem teto, um jogador sozinho no treino livre (ilimitado, sem XP) consome a cota do dia e a correção passa a falhar para todo mundo.
+
+O limite é **10 envios em janela deslizante de 24 h**, checado em `iniciar_partida()`. Três decisões que valem preservar:
+
+- **No início, não no envio.** Recusar em `enviar_partida` faria o aluno descobrir o teto depois de escrever a redação.
+- **Depois do "existe partida ativa? devolve ela".** Quem já está no meio de uma partida precisa voltar para ela mesmo tendo batido o teto.
+- **Janela deslizante, não dia de calendário.** Dia de calendário depende de fuso (o banco roda em UTC) e cria a borda de gastar o teto às 23h59 e o seguinte às 00h01.
+
+`redacoes_restantes()` devolve **quantas faltam, nunca o limite** — o cliente não recebe o número, e é isso que impede uma segunda cópia da regra em TypeScript divergir da que barra. O `10` aparece em dois lugares no mesmo arquivo (`iniciar_partida` e `redacoes_restantes`) e os dois precisam concordar.
+
+O botão desabilitado no lobby é cortesia; quem barra é o Postgres.
+
+### O painel admin não usa `service_role`
+
+Toda agregação de `/admin` cruza usuários, e a RLS de `matches` restringe a `auth.uid()`. A saída tentadora seria `requireAdmin()` — e é justamente por **ignorar RLS** que ela não serve: um erro de rota, um layout que esquece a guarda, e o banco inteiro vaza.
+
+O padrão é o de `ranking()`: funções `security definer` em `supabase/admin.sql` que **começam com `if not sou_admin() then raise`**. A guarda mora no banco, não em TypeScript — `app/admin-actions.ts` de propósito **não** repete a checagem, porque uma segunda cópia da regra é o que diverge da que protege. O layout do Next protege a *tela*; a função protege o *dado*, e ela é chamável pela API REST do Supabase por qualquer pessoa logada.
+
+**`profiles.is_admin` seria uma escada de privilégio sem o `revoke`.** A policy `profiles_self` é `for all`, então o usuário escreve no próprio profile — é o que faz o campo de nome funcionar. Com `is_admin` sendo só mais uma coluna, qualquer um vira admin com `update profiles set is_admin = true where id = auth.uid()`. RLS não ajuda: a linha é dele. O que fecha é privilégio de **coluna**:
+
+```sql
+revoke update on profiles from authenticated, anon;
+grant  update (username) on profiles to authenticated;
+```
+
+Consequência: **coluna nova em `profiles` nasce sem permissão de escrita para o usuário.** Se o jogador precisar editar outra coisa, acrescente ao `grant` — o sintoma é gravação que não acontece e não dá erro na tela.
+
+O primeiro admin nasce de um `update` manual no SQL Editor. Não há tela para promover: exigiria um admin para começar.
+
+### Ler redação de aluno deixa rastro
+
+`admin_partida()` grava em `admin_access_log` **na mesma transação** em que devolve o texto — mesmo desenho de `abrir_dica()`. Por isso a lista (`admin_partidas`) traz só metadados: puxar transcrição ali geraria uma linha de log por item a cada abertura da lista e o registro perderia o sentido. A rota de detalhe usa `prefetch={false}` — um hover não pode virar acesso registrado.
+
+### Um arquivo `"use server"` só exporta função async
+
+Nem constante, nem `export const x = () => promise` — arrow function não conta como async e o build falha com *"Server Actions must be async functions"*. Foi assim que `TREINO_LIVRE_MIN_MINUTOS` teve de sair de `app/actions.ts` para `lib/treinoLivre.ts`, e que `app/admin-actions.ts` quebrou na primeira tentativa. Constante compartilhada vai para `lib/`.
 
 ### Dois clientes Supabase
 
@@ -175,4 +216,5 @@ A etapa de visão preserva os erros do aluno. Se ela "conserta" a ortografia, a 
   ignora o `redirectTo` e joga na Site URL, o `code` se perde e o link "funciona"
   caindo na tela de login. `/auth/confirm` aceita `code` (template padrão) e
   `token_hash` (template reescrito) porque trocar o template do e-mail é comum.
+- **`PRECOS` vazio em `lib/custoIA.ts`.** O painel mostra tokens e omite o valor em dólar até você preencher com os preços do billing. Vazio é deliberado: preço inventado vira estimativa com cara de fato, e decisão de orçamento sai dela. Anote a data em `conferidoEm`.
 - **Curadoria só existe no disco desta máquina.** `seed-temas.sql` e `seed-dicas.sql` estão fora do Git. Fazer backup.

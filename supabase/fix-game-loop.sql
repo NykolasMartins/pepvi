@@ -66,6 +66,9 @@ declare
   v_min_xp     integer;
   v_is_free    boolean := p_minutes is not null;
   v_titulo     text;
+  v_enviadas   integer;
+  v_libera_em  timestamptz;
+  v_limite     integer;
 begin
   if p_user_id is null then
     raise exception 'não autenticado';
@@ -142,6 +145,41 @@ begin
 
   if v_match_id is not null then
     return v_match_id;
+  end if;
+
+  -- ---- Teto de correções por usuário -------------------------------------
+  --
+  -- Cada redação enviada custa de 1 a 2 chamadas de IA, e a cota do projeto é
+  -- DIÁRIA e COMPARTILHADA entre todos os jogadores. Sem teto, um jogador
+  -- sozinho — no treino livre, que é ilimitado e não custa XP — consome a cota
+  -- do dia inteiro e a correção passa a falhar para todo mundo.
+  --
+  -- A verificação é AQUI e não em enviar_partida de propósito: recusar no envio
+  -- significaria o aluno descobrir o limite depois de escrever a redação. Aqui
+  -- ele descobre antes de gastar o tempo.
+  --
+  -- E vem DEPOIS do "existe partida ativa? devolve ela": quem já está no meio de
+  -- uma partida precisa poder voltar para ela mesmo tendo batido o teto.
+  --
+  -- Janela DESLIZANTE de 24 h, não "por dia do calendário": dia de calendário
+  -- depende de fuso (o banco roda em UTC, o jogador não) e cria a borda óbvia
+  -- de gastar o teto às 23h59 e o teto seguinte às 00h01.
+  --
+  -- O número mora na tabela `config` (supabase/admin.sql), para o painel poder
+  -- ajustá-lo sem deploy. O cliente nunca o recebe — ele pergunta quantas
+  -- restam. O segundo argumento de config_int é o valor de segurança: se a
+  -- linha sumir, o teto continua existindo em vez de virar ilimitado.
+  v_limite := config_int('limite_diario', 10);
+
+  select count(*), min(submitted_at) + interval '24 hours'
+    into v_enviadas, v_libera_em
+    from matches
+   where user_id = p_user_id
+     and submitted_at > now() - interval '24 hours';
+
+  if v_enviadas >= v_limite then
+    raise exception 'limite de % redações em 24 horas atingido; a próxima vaga abre em %',
+      v_limite, to_char(v_libera_em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI');
   end if;
 
   -- ---- Escolhe o tema e cria ---------------------------------------------
@@ -227,6 +265,28 @@ begin
 
   return v_match_id;
 end;
+$$;
+
+-- ==========================================================================
+-- 2b) Quantas redações ainda cabem — para a tela avisar ANTES.
+--
+-- Devolve o RESTANTE, nunca o limite: o cliente não precisa saber o número, e
+-- não saber é o que impede uma segunda cópia dele em TypeScript. O teto sai de
+-- config_int, a mesma fonte que iniciar_partida lê — as duas não têm como
+-- divergir.
+-- ==========================================================================
+create or replace function redacoes_restantes()
+returns table (restantes integer, libera_em timestamptz)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select greatest(0, config_int('limite_diario', 10) - count(*))::integer,
+         min(submitted_at) + interval '24 hours'
+    from matches
+   where user_id = auth.uid()
+     and submitted_at > now() - interval '24 hours';
 $$;
 
 -- ==========================================================================

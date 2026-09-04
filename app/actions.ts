@@ -45,6 +45,27 @@ export async function listDifficulties(): Promise<Dificuldade[]> {
   return (data ?? []) as Dificuldade[];
 }
 
+/**
+ * Quantas redações ainda cabem na janela de 24 h.
+ *
+ * Devolve o RESTANTE, nunca o limite: o número mora só no Postgres, e não
+ * conhecê-lo aqui é o que impede uma segunda cópia da regra em TypeScript
+ * divergir da que realmente barra.
+ */
+export async function remainingEssays(): Promise<{
+  restantes: number;
+  liberaEm: string | null;
+}> {
+  const supabase = await supabaseUser();
+  const { data, error } = await supabase.rpc("redacoes_restantes");
+  if (error) throw new Error(error.message);
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    restantes: (row?.restantes as number) ?? 0,
+    liberaEm: (row?.libera_em as string | null) ?? null,
+  };
+}
+
 export type LinhaRanking = {
   posicao: number;
   username: string;
